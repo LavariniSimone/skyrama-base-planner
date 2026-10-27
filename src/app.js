@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'griglia-card:v1';
-const MAX_GRID = 50;
+const MAX_GRID = 56;
 const MAX_TYPE_SIZE = 30;
 const MAX_RADIUS = 20;
 const MIN_CELL = 8;
