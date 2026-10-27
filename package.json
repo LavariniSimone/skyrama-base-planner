@@ -1,0 +1,38 @@
+{
+  "name": "skyrama-base-planner",
+  "productName": "Skyrama Base Planner",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "appId": "it.biters.skyramabaseplanner",
+    "productName": "Skyrama Base Planner",
+    "files": [
+      "main.js",
+      "src/**/*",
+      "node_modules/@fontsource/outfit/**/*"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "@fontsource/outfit": "^5.3.0"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0"
+  }
+}

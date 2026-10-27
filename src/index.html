@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skyrama Base Planner</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; font-src 'self'">
+<link rel="stylesheet" href="../node_modules/@fontsource/outfit/400.css">
+<link rel="stylesheet" href="../node_modules/@fontsource/outfit/500.css">
+<link rel="stylesheet" href="../node_modules/@fontsource/outfit/600.css">
+<link rel="stylesheet" href="../node_modules/@fontsource/outfit/700.css">
+<link rel="stylesheet" href="styles.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<main id="board">
+  <div id="grid">
+    <div id="area" hidden></div>
+    <div id="preview" hidden></div>
+  </div>
+</main>
+
+<section id="inventory">
+  <div class="inv-head">
+    <h2>Inventario</h2>
+    <button type="button" id="newType" class="primary">Nuova tipologia</button>
+  </div>
+  <div class="inv-list" id="invList"></div>
+  <div id="toolbar">
+    <button type="button" id="toggleRemove" aria-pressed="false">Modalità rimozione</button>
+    <div class="dropdown">
+      <button type="button" id="removeMenuToggle" aria-haspopup="menu" aria-expanded="false" aria-controls="removeMenu">Rimuovere ... <svg class="dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
+      <div id="removeMenu" class="dropdown-menu" role="menu" hidden>
+        <button type="button" role="menuitem" id="removePiazzole">Piazzole</button>
+        <button type="button" role="menuitem" id="removeHotel">Hotel</button>
+        <button type="button" role="menuitem" id="removePotenziamenti">Potenziamenti</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<button type="button" id="menuToggle" aria-expanded="false" aria-controls="menuPanel" aria-label="Apri menù">
+  <svg class="icon-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+</button>
+
+<div id="menuPanel" role="region" aria-labelledby="menuTitle" inert>
+  <h1 id="menuTitle">Skyrama Base Planner</h1>
+  <div class="menu-section">
+    <h2>Griglia</h2>
+    <label>Colonne <input type="number" id="cols" min="1" max="50"></label>
+    <label>Righe <input type="number" id="rows" min="1" max="50"></label>
+    <button type="button" id="applyGrid" class="primary">Applica</button>
+  </div>
+  <div class="menu-section">
+    <h2>Dati</h2>
+    <button type="button" id="exportBtn">Esporta</button>
+    <button type="button" id="importBtn">Importa</button>
+  </div>
+</div>
+
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+<span id="msg" role="status" aria-live="polite"></span>
+
+<dialog id="typeDialog">
+  <form id="typeForm">
+    <h2 id="dialogTitle">Nuova tipologia</h2>
+    <label class="field">Nome <input type="text" id="fName" maxlength="40" required></label>
+    <label class="field">Colore <input type="color" id="fColor"></label>
+    <label class="field">Larghezza (celle) <input type="number" id="fW" min="1" max="30" required></label>
+    <label class="field">Altezza (celle) <input type="number" id="fH" min="1" max="30" required></label>
+    <label class="field">Tipo
+      <select id="fKind">
+        <option value="edificio">Edificio</option>
+        <option value="potenziamento">Potenziamento</option>
+      </select>
+    </label>
+
+    <fieldset id="edificioFs">
+      <legend>Edificio</legend>
+      <label class="check"><input type="checkbox" id="fPiazzola"> Piazzola</label>
+      <label class="check"><input type="checkbox" id="fHotel"> Hotel</label>
+      <div id="hotelFields">
+        <label class="field">Numero di residenti <input type="number" id="fResidenti" min="0" max="1000000"></label>
+        <label class="field">Minuti per completamento <input type="number" id="fMinuti" min="1" max="100000"></label>
+      </div>
+    </fieldset>
+
+    <fieldset id="potenzFs" hidden>
+      <legend>Potenziamento</legend>
+      <label class="check"><input type="checkbox" id="fEffPiazzole"> Piazzole</label>
+      <label class="check"><input type="checkbox" id="fEffHotel"> Hotel</label>
+      <label class="field"><span id="lblQuantita">Quantità</span> <input type="number" id="fQuantita" min="0" max="1000000" step="any"></label>
+      <label class="field">Raggio (celle) <input type="number" id="fRaggio" min="0" max="20"></label>
+      <p class="hint">0 = nessun effetto, 1 = celle adiacenti</p>
+    </fieldset>
+
+    <div class="dialog-actions">
+      <button type="button" id="cancelType">Annulla</button>
+      <button type="submit" class="primary">Salva</button>
+    </div>
+  </form>
+</dialog>
+
+</body>
+</html>
