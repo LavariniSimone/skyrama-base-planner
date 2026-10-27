@@ -5,7 +5,7 @@ App desktop (Electron) per pianificare la disposizione della base di Skyrama su 
 ## Funzionalità
 
 ### Griglia
-- Dimensioni configurabili dal menù (da 1 a 56 colonne/righe).
+- Dimensioni configurabili dal menù (da 20 a 56 colonne/righe).
 - Zoom con la rotella del mouse, pan trascinando lo sfondo, doppio clic per ripristinare lo zoom.
 - Ridimensionando la griglia, le card che non entrano più vengono rimesse in deposito automaticamente.
 

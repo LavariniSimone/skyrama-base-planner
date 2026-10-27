@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'griglia-card:v1';
+const MIN_GRID = 20;
 const MAX_GRID = 56;
 const MAX_TYPE_SIZE = 30;
 const MAX_RADIUS = 20;
@@ -78,7 +79,7 @@ function movedMessage(count) {
 }
 
 function defaultState() {
-  return { version: 1, grid: { cols: 20, rows: 15 }, types: [], instances: [] };
+  return { version: 1, grid: { cols: 20, rows: 20 }, types: [], instances: [] };
 }
 
 function sanitizeType(raw) {
@@ -128,7 +129,7 @@ function sanitize(raw) {
   const grid = raw.grid;
   return {
     version: 1,
-    grid: { cols: toInt(grid.cols, 1, MAX_GRID, 20), rows: toInt(grid.rows, 1, MAX_GRID, 15) },
+    grid: { cols: toInt(grid.cols, MIN_GRID, MAX_GRID, 20), rows: toInt(grid.rows, MIN_GRID, MAX_GRID, 20) },
     types,
     instances
   };
@@ -324,7 +325,7 @@ function removePlacedWhere(predicate) {
 }
 
 function resizeGrid(cols, rows) {
-  state.grid = { cols: toInt(cols, 1, MAX_GRID, state.grid.cols), rows: toInt(rows, 1, MAX_GRID, state.grid.rows) };
+  state.grid = { cols: toInt(cols, MIN_GRID, MAX_GRID, state.grid.cols), rows: toInt(rows, MIN_GRID, MAX_GRID, state.grid.rows) };
   zoom = 1;
   commit(movedMessage(normalizePlacements()));
   centerBoard();
