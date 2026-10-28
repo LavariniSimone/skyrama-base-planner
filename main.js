@@ -2,8 +2,12 @@ const { app, BrowserWindow, Menu, net, protocol, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const PRESETS = require('./src/presets.js');
+const VEHICLES = require('./src/vehicles.js');
 
-const ICON_URLS = new Map(PRESETS.filter(p => p.url).map(p => [p.icon, p.url]));
+const ICON_URLS = new Map([
+  ...PRESETS.filter(p => p.url).map(p => [p.icon, p.url]),
+  ...VEHICLES.filter(v => v.imageUrl).map(v => [v.icon, v.imageUrl])
+]);
 const ICON_NAME = /^[a-z0-9-]+\.png$/;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_ICON_BYTES = 1024 * 1024;
@@ -21,7 +25,7 @@ async function downloadIcon(name, file) {
   const res = await net.fetch(ICON_URLS.get(name), { signal: AbortSignal.timeout(ICON_TIMEOUT) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
-  if (buffer.length > MAX_ICON_BYTES || !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) throw new Error('Icona non valida');
+  if (buffer.length > MAX_ICON_BYTES || !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) throw new Error('Invalid icon');
   const tmp = `${file}.tmp`;
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
   await fs.promises.writeFile(tmp, buffer);

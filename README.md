@@ -1,64 +1,70 @@
 # Skyrama Base Planner
 
-App desktop (Electron) per pianificare la disposizione della base di Skyrama su una griglia: si definiscono le tipologie di edifici e potenziamenti, si posizionano sulla mappa con il drag & drop e si vedono subito i bonus che i potenziamenti applicano agli edifici vicini.
+Desktop app (Electron) for planning the layout of a Skyrama base on a grid: define building and boost types, place them on the map with drag & drop and instantly see the bonuses that boosts apply to nearby buildings.
 
-## Funzionalità
+## Features
 
-### Griglia
-- Griglia quadrata, lato configurabile dal menù (da 20 a 56 celle).
-- Zoom con la rotella del mouse, pan trascinando lo sfondo, doppio clic per ripristinare lo zoom.
-- Ridimensionando la griglia, le card che non entrano più vengono rimosse dalla griglia automaticamente.
+### Grid
+- Square grid, side length configurable from the menu (from 20 to 56 cells).
+- Zoom with the mouse wheel, pan by dragging the background, double-click to reset the zoom.
+- When the grid is resized, cards that no longer fit are automatically removed from the grid.
 
-### Tipologie
-Ogni tipologia ha nome, categoria (Airside, Landside, Decorazione), dimensioni in celle (fino a 30×30) e un'icona opzionale, e può essere di due tipi:
+### Types
+Each type has a name, a category (Airside, Landside, Decoration), a size in cells (up to 30×30) and an optional icon, and can be one of two kinds:
 
-- **Edificio**
-  - *Servizio aerei*: mostra la riduzione del tempo di servizio ricevuta dai potenziamenti.
-  - *Passeggeri*: ha un numero di passeggeri e i minuti ogni quanto vengono generati; mostra i passeggeri totali, bonus compresi.
-- **Potenziamento**
-  - Effetto su *Riduzione tempo di servizio* (in %) oppure su *Bonus passeggeri* (passeggeri aggiuntivi).
-  - *Raggio* d'azione in celle (0 = nessun effetto, 1 = celle adiacenti).
+- **Building**
+  - *Plane service*: shows the service time reduction received from boosts.
+  - *Passengers*: has a number of passengers and how many minutes it takes to generate them; shows the total passengers, bonuses included.
+- **Boost**
+  - Effect on *Service time reduction* (in %) or on *Passenger bonus* (additional passengers).
+  - Effect *radius* in cells (0 = no effect, 1 = adjacent cells).
 
-### Preset
-- Dal dialog di una tipologia, «Scegli tra i preset» propone gli oggetti standard di Skyrama (Airside, Landside, Decorazione) con dimensioni, effetti e icona già compilati.
-- Le icone non sono incluse nel repository: vengono scaricate al primo utilizzo e conservate in locale; senza connessione le card restano senza icona.
-- Ogni preset può riportare i costi in Aircoins e/o Aircash e un limite massimo di card piazzabili (es. Weatherstation 3, First Aid Station 4, Fire Station 2, Weather Balloon 5). Le decorazioni premio (ottenute come ricompensa per continente) non hanno costo e sono limitate a 1.
-- All'avvio e all'import le tipologie con icona di preset vengono riallineate automaticamente ai dati del preset: eventuali modifiche manuali a queste tipologie vengono sovrascritte. Le tipologie personalizzate senza icona non hanno costi né limiti.
+### Presets
+- From a type's dialog, «Choose from presets» offers the standard Skyrama objects (Airside, Landside, Decoration) with size, effects and icon already filled in.
+- Icons are not included in the repository: they are downloaded on first use and stored locally; without a connection the cards have no icon.
+- Each preset can show its cost in Aircoins and/or Aircash and a maximum number of placeable cards (e.g. Weatherstation 3, First Aid Station 4, Fire Station 2, Weather Balloon 5). Reward decorations (earned per continent) have no cost and are limited to 1.
+- On startup and on import, types with a preset icon are automatically realigned to the preset data: any manual changes to these types are overwritten. Custom types without an icon have no costs or limits.
 
-### Inventario e posizionamento
-- L'inventario è un pannello compatto in basso, comprimibile; lo stato compresso viene ricordato. Le tab Airside, Landside e Decorazione filtrano le tipologie, mostrate su una sola riga che scorre in orizzontale anche con la rotella del mouse. Ogni tipologia è una card con icona e nome: passando il mouse compaiono le statistiche (dimensioni, effetti e card piazzate); sotto il nome, per i potenziamenti, compare il valore dell'effetto (es. «-5% servizio» o «+10 passeggeri») e un contatore indica quante ne sono piazzate (con limite: «n/max»). Nel popup compaiono anche i costi, Aircoins e Aircash su righe separate.
-- Un clic sulla card apre la modifica della tipologia, dove si gestiscono categoria ed eliminazione. Il pulsante «+» crea una nuova tipologia.
-- Si trascina la card dell'inventario sulla griglia, tutte le volte che serve: ogni rilascio valido crea una nuova card piazzata, fino all'eventuale limite del preset (oltre il quale il trascinamento è bloccato con un avviso); un'anteprima indica se la posizione è valida (niente sovrapposizioni né uscite dai bordi).
-- Se un layout caricato o importato supera i limiti, le card vengono mantenute ma evidenziate e segnalate con un messaggio; non vengono rimosse.
-- Le card sulla griglia si spostano trascinandole e si ruotano con il tasto destro. Anche durante il trascinamento (dalla griglia o dall'inventario) il tasto destro ruota la card in mano; Esc annulla il trascinamento e rilasciare fuori dalla griglia lo annulla. Durante il trascinamento, avvicinandosi ai bordi della griglia zoomata la vista scorre in quella direzione, più velocemente quanto più si è vicini al bordo. Lo scorrimento si attiva solo dopo che la card in mano è entrata nell'area della griglia, non mentre la si porta dall'inventario o all'inizio del trascinamento.
-- Passando il mouse su una card compare un popup con icona e dettagli; sui potenziamenti viene anche evidenziata l'area d'effetto.
-- **Modalità rimozione**: con un clic la card viene rimossa dalla griglia.
-- **Vista isometrica**: lo switch «2D / Isometrica» in alto a destra mostra la base con le icone degli oggetti, con zoom (rotella, doppio clic per ripristinare) e pan come in 2D; è in sola lettura e nasconde inventario e menù, drag & drop e rimozione sono disponibili in vista 2D.
-- **Rimuovere ...**: rimuove dalla griglia in un colpo solo tutti gli edifici con servizio aerei, quelli con passeggeri o i potenziamenti.
+### Planes
+- The «Planes» button in the top right opens the catalog of Skyrama planes with costs, rewards, price and unlock level.
+- Tabs filter by type (All, Small, Medium, Large, Cargo, Searama, Helirama); flight duration and sort order (Level, XP, Aircoins, Goods) are chosen from the dropdowns.
+- «Top» badges highlight, within each type and for each flight duration, the planes with the highest XP, Aircoins, Aircoins per passenger (passenger planes) or Goods (cargo); in case of a tie the badge goes to all of them.
+- Icons are downloaded on first use as for presets; without a connection the cards show the initials.
 
-### Dati
-- Lo stato viene salvato in automatico in locale.
-- Dal menù si può esportare e importare la configurazione in un file JSON (`skyrama-base-planner.json`).
+### Inventory and placement
+- The inventory is a compact, collapsible panel at the bottom; the collapsed state is remembered. The Airside, Landside and Decoration tabs filter the types, shown on a single row that scrolls horizontally, also with the mouse wheel. Each type is a card with icon and name: hovering shows its stats (size, effects and placed cards); under the name, boosts show their effect value (e.g. «-5% service» or «+10 passengers») and a counter shows how many are placed (with a limit: «n/max»). The popup also shows the costs, Aircoins and Aircash on separate lines.
+- Clicking a card opens the type editor, where category and deletion are managed. The «+» button creates a new type.
+- Drag an inventory card onto the grid as many times as needed: each valid drop creates a new placed card, up to the preset's limit if any (beyond which dragging is blocked with a warning); a preview shows whether the position is valid (no overlaps and nothing outside the edges).
+- If a loaded or imported layout exceeds the limits, the cards are kept but highlighted and reported with a message; they are not removed.
+- Cards on the grid are moved by dragging them and rotated with the right mouse button. While dragging (from the grid or from the inventory) the right button also rotates the card in hand; Esc cancels the drag, and dropping outside the grid cancels it too. While dragging, getting close to the edges of the zoomed grid scrolls the view in that direction, faster the closer you are to the edge. Scrolling only starts once the card in hand has entered the grid area, not while bringing it from the inventory or at the start of the drag.
+- Hovering a card shows a popup with icon and details; for boosts the effect area is also highlighted.
+- **Remove mode**: a click removes the card from the grid.
+- **Isometric view**: the «2D / Isometric» switch in the top right shows the base with the object icons, with zoom (wheel, double-click to reset) and pan as in 2D; it is read-only and hides inventory and menu, drag & drop and removal are available in the 2D view.
+- **Remove ...**: removes from the grid in one go all buildings with plane service, those with passengers, or the boosts.
 
-## Requisiti
+### Data
+- The state is saved automatically on the local machine.
+- From the menu you can export and import the configuration as a JSON file (`skyrama-base-planner.json`).
 
-- Node.js con npm
+## Requirements
 
-## Avvio in sviluppo
+- Node.js with npm
+
+## Development
 
 ```bash
 npm install
 npm start
 ```
 
-## Build per Windows
+## Windows build
 
 ```bash
 npm run dist
 ```
 
-Genera nella cartella `dist/` sia l'installer NSIS sia la versione portable.
+Generates both the NSIS installer and the portable version in the `dist/` folder.
 
 ## Disclaimer
 
-Progetto amatoriale di fan, non affiliato né approvato dai proprietari di Skyrama. Nomi, immagini e marchi appartengono ai rispettivi proprietari. Le immagini non sono incluse in questo repository: vengono scaricate a runtime dalle fonti originali e salvate nella cache locale dell'app. La licenza del codice non si applica a tali immagini e marchi.
+Amateur fan project, not affiliated with or endorsed by the owners of Skyrama. Names, images and trademarks belong to their respective owners. Images are not included in this repository: they are downloaded at runtime from the original sources and saved in the app's local cache. The code license does not apply to those images and trademarks.

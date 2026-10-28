@@ -22,6 +22,10 @@ const ISO_MAX_K = ZOOM_MAX_CELL / Math.SQRT2;
 const PRESETS = globalThis.SKYRAMA_PRESETS ?? [];
 const PRESET_BY_ICON = new Map(PRESETS.map(p => [p.icon, p]));
 const CATEGORIES = ['airside', 'landside', 'decorazione'];
+const VEHICLES = globalThis.SKYRAMA_VEHICLES ?? [];
+const VEHICLE_GROUP_LABELS = { small: 'Small', medium: 'Medium', large: 'Large', cargo: 'Cargo', searama: 'Searama', ramacopter: 'Helirama' };
+const VEHICLE_GROUP_PLURALS = { small: 'small planes', medium: 'medium planes', large: 'large planes', cargo: 'cargo planes', searama: 'Searamas', ramacopter: 'Heliramas' };
+const VEHICLE_CATEGORY_SHORT = { small: 'S', medium: 'M', large: 'L' };
 
 const $ = id => document.getElementById(id);
 const board = $('board');
@@ -45,6 +49,11 @@ const removeMenu = $('removeMenu');
 const presetDialog = $('presetDialog');
 const presetGrid = $('presetGrid');
 const presetTabs = $('presetTabs');
+const vehicleDialog = $('vehicleDialog');
+const vehicleGrid = $('vehicleGrid');
+const vehicleTabs = $('vehicleTabs');
+const vehicleDurationSelect = $('vehicleDuration');
+const vehicleSortSelect = $('vehicleSort');
 const cardPopup = $('cardPopup');
 const dragGhost = $('dragGhost');
 
@@ -70,6 +79,9 @@ let editingId = null;
 let msgTimer = null;
 let formIcon = '';
 let presetCategory = 'airside';
+let vehicleGroupFilter = 'all';
+let vehicleDuration = '';
+let vehicleSort = 'level';
 let invCategory = 'airside';
 const failedIcons = new Set();
 
@@ -94,14 +106,14 @@ function formatNumber(n) {
   return String(Math.round(n * 100) / 100);
 }
 
-const EFFECT_LABELS = { hotel: 'Bonus passeggeri', piazzole: 'Riduzione tempo di servizio' };
+const EFFECT_LABELS = { hotel: 'Passenger bonus', piazzole: 'Service time reduction' };
 
 function boostValue(type) {
   return type.effetto === 'piazzole' ? `-${formatNumber(type.quantita)}%` : `+${formatNumber(type.quantita)}`;
 }
 
 function boostLabel(type) {
-  return `${boostValue(type)} ${type.effetto === 'piazzole' ? 'servizio' : 'passeggeri'}`;
+  return `${boostValue(type)} ${type.effetto === 'piazzole' ? 'service' : 'passengers'}`;
 }
 
 function formatDuration(minuti) {
@@ -137,12 +149,12 @@ function createIconImg(icon, className, onError) {
 
 function movedMessage(count) {
   if (count === 0) return undefined;
-  return count === 1 ? '1 card rimossa dalla griglia' : `${count} card rimosse dalla griglia`;
+  return count === 1 ? '1 card removed from the grid' : `${count} cards removed from the grid`;
 }
 
 function syncedMessage(count) {
   if (count === 0) return undefined;
-  return count === 1 ? '1 tipologia aggiornata dai preset' : `${count} tipologie aggiornate dai preset`;
+  return count === 1 ? '1 type updated from presets' : `${count} types updated from presets`;
 }
 
 function joinMessages(...parts) {
@@ -152,7 +164,7 @@ function joinMessages(...parts) {
 
 function limitMessage() {
   const names = overLimitNames();
-  return names.length > 0 ? `Limite superato: ${names.join(', ')}` : undefined;
+  return names.length > 0 ? `Limit exceeded: ${names.join(', ')}` : undefined;
 }
 
 function defaultState() {
@@ -174,7 +186,7 @@ function sanitizeType(raw) {
   const quantita = effetto === 'hotel' ? Math.round(toAmount(raw.quantita, 1e6)) : effetto ? toAmount(raw.quantita, MAX_REDUCTION) : 0;
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : uid(),
-    name: String(raw.name ?? '').trim().slice(0, 40) || 'Senza nome',
+    name: String(raw.name ?? '').trim().slice(0, 40) || 'Unnamed',
     icon,
     category: CATEGORIES.includes(raw.category) ? raw.category : defaultCategory(icon, kind, hotel, piazzola),
     w: toInt(raw.w, 1, MAX_TYPE_SIZE),
@@ -241,7 +253,7 @@ function saveState() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
-    showMsg('Impossibile salvare i dati nel browser');
+    showMsg('Unable to save data in the browser');
   }
 }
 
@@ -355,8 +367,8 @@ function saveType(data, id) {
 function deleteType(id) {
   const type = typeOf(id);
   const placed = state.instances.filter(i => i.typeId === id).length;
-  const suffix = placed === 0 ? '' : placed === 1 ? ' e la sua card sulla griglia' : ` e le sue ${placed} card sulla griglia`;
-  if (!confirm(`Eliminare "${type.name}"${suffix}?`)) return;
+  const suffix = placed === 0 ? '' : placed === 1 ? ' and its card on the grid' : ` and its ${placed} cards on the grid`;
+  if (!confirm(`Delete "${type.name}"${suffix}?`)) return;
   state.types = state.types.filter(t => t.id !== id);
   state.instances = state.instances.filter(i => i.typeId !== id);
   commit();
@@ -380,7 +392,7 @@ function rotateInstance(instId) {
   const type = typeOf(inst.typeId);
   if (type.w === type.h) return;
   if (!canPlace(sizeOf(type, !inst.rot), inst.x, inst.y, inst.id)) {
-    showMsg('Spazio insufficiente per ruotare la card');
+    showMsg('Not enough space to rotate the card');
     return;
   }
   inst.rot = !inst.rot;
@@ -397,7 +409,7 @@ function removePlacedWhere(predicate) {
   state.instances = state.instances.filter(i => !predicate(typeOf(i.typeId)));
   const count = before - state.instances.length;
   if (count === 0) {
-    showMsg('Nessuna card da rimuovere');
+    showMsg('No cards to remove');
     return;
   }
   commit(movedMessage(count));
@@ -415,15 +427,15 @@ function resizeGrid(size) {
 function cardLines(inst) {
   const type = typeOf(inst.typeId);
   if (type.kind === 'potenziamento') {
-    if (type.effetto === 'piazzole') return [type.name, `${boostValue(type)} tempo di servizio · r ${type.raggio}`];
-    if (type.effetto === 'hotel') return [type.name, `${boostValue(type)} passeggeri · r ${type.raggio}`];
-    return [type.name, 'nessun effetto'];
+    if (type.effetto === 'piazzole') return [type.name, `${boostValue(type)} service time · r ${type.raggio}`];
+    if (type.effetto === 'hotel') return [type.name, `${boostValue(type)} passengers · r ${type.raggio}`];
+    return [type.name, 'no effect'];
   }
   const lines = [type.name];
-  if (type.piazzola) lines.push(`Servizio aerei -${formatNumber(piazzolaBonus(inst))}%`);
+  if (type.piazzola) lines.push(`Plane service -${formatNumber(piazzolaBonus(inst))}%`);
   if (type.hotel) {
     const bonus = bonusOf(inst, 'hotel');
-    lines.push(`Passeggeri: ${type.residenti + bonus}` + (bonus > 0 ? ` (${type.residenti} + ${bonus})` : ''));
+    lines.push(`Passengers: ${type.residenti + bonus}` + (bonus > 0 ? ` (${type.residenti} + ${bonus})` : ''));
   }
   return lines;
 }
@@ -484,18 +496,18 @@ function hideCardPopup() {
 }
 
 function typePopupLines(type) {
-  const lines = [`${type.kind === 'edificio' ? 'Edificio' : 'Potenziamento'} · ${type.w}×${type.h}`];
+  const lines = [`${type.kind === 'edificio' ? 'Building' : 'Boost'} · ${type.w}×${type.h}`];
   if (type.kind === 'edificio') {
-    if (type.piazzola) lines.push('Servizio aerei');
+    if (type.piazzola) lines.push('Plane service');
     if (type.hotel) lines.push(`${type.residenti} pass. / ${formatDuration(type.minuti)}`);
   } else if (type.effetto) {
-    lines.push(boostLabel(type), `Raggio ${type.raggio}`);
+    lines.push(boostLabel(type), `Radius ${type.raggio}`);
   } else {
-    lines.push('Nessun effetto');
+    lines.push('No effect');
   }
   lines.push(...priceLines(presetOf(type)));
   const limit = limitOf(type);
-  lines.push(limit > 0 ? `Piazzate: ${placedByIcon(type.icon)}/${limit}` : `Piazzate: ${copiesOf(type.id).placed}`);
+  lines.push(limit > 0 ? `Placed: ${placedByIcon(type.icon)}/${limit}` : `Placed: ${copiesOf(type.id).placed}`);
   return lines;
 }
 
@@ -599,7 +611,7 @@ function copiesOf(typeId) {
 }
 
 function placedLabel(count) {
-  return count === 1 ? '1 piazzata' : `${count} piazzate`;
+  return count === 1 ? '1 placed' : `${count} placed`;
 }
 
 function presetOf(type) {
@@ -620,12 +632,12 @@ function limitReached(type) {
 }
 
 function formatPrice(n) {
-  return n.toLocaleString('it-IT');
+  return n.toLocaleString('en-US');
 }
 
 function priceLines(preset) {
   if (!preset) return [];
-  if (preset.premio) return [`Premio: ${preset.premio}`];
+  if (preset.premio) return [`Reward: ${preset.premio}`];
   const lines = [];
   if (preset.aircoins) lines.push(`${formatPrice(preset.aircoins)} Aircoins`);
   if (preset.aircash) lines.push(`${formatPrice(preset.aircash)} Aircash`);
@@ -658,7 +670,7 @@ function createInitials(type) {
 function createInventoryCard(type) {
   const { placed } = copiesOf(type.id);
   const limit = limitOf(type);
-  const countLabel = limit > 0 ? `${placedByIcon(type.icon)}/${limit} piazzate` : placedLabel(placed);
+  const countLabel = limit > 0 ? `${placedByIcon(type.icon)}/${limit} placed` : placedLabel(placed);
 
   const card = el('div', 'inv-card');
   card.dataset.id = type.id;
@@ -693,7 +705,7 @@ function renderInventory() {
   for (const tab of invTabs.children) tab.setAttribute('aria-selected', String(tab.dataset.category === invCategory));
   const types = state.types.filter(t => t.category === invCategory);
   if (types.length === 0) {
-    invList.replaceChildren(el('p', 'inv-empty', 'Nessuna tipologia in questa categoria: creane una con +'));
+    invList.replaceChildren(el('p', 'inv-empty', 'No types in this category: create one with +'));
     return;
   }
   invList.replaceChildren(...types.map(createInventoryCard));
@@ -869,7 +881,7 @@ function setRemoveMode(active) {
   const toggle = $('toggleRemove');
   toggle.classList.toggle('active', active);
   toggle.setAttribute('aria-pressed', String(active));
-  toggle.textContent = active ? 'Modalità rimozione: attiva' : 'Modalità rimozione';
+  toggle.textContent = active ? 'Remove mode: on' : 'Remove mode';
 }
 
 function setIsoMode(active) {
@@ -898,7 +910,7 @@ function setInventoryCollapsed(collapsed) {
   inventory.classList.toggle('collapsed', collapsed);
   invBody.hidden = collapsed;
   invToggle.setAttribute('aria-expanded', String(!collapsed));
-  invToggle.setAttribute('aria-label', collapsed ? 'Espandi inventario' : 'Comprimi inventario');
+  invToggle.setAttribute('aria-label', collapsed ? 'Expand inventory' : 'Collapse inventory');
   if (collapsed) setRemoveMenuOpen(false);
 }
 
@@ -922,7 +934,7 @@ function setMenuOpen(open) {
   menuPanel.classList.toggle('open', open);
   menuPanel.inert = !open;
   menuToggle.setAttribute('aria-expanded', String(open));
-  menuToggle.setAttribute('aria-label', open ? 'Chiudi menù' : 'Apri menù');
+  menuToggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
   if (open) $('gridSize').focus();
 }
 
@@ -969,7 +981,7 @@ function activateDrag() {
   const dragType = typeOf(drag.typeId);
   if (!drag.instId && limitReached(dragType)) {
     endDrag();
-    showMsg(`Limite raggiunto: massimo ${limitOf(dragType)} "${presetOf(dragType).name}"`);
+    showMsg(`Limit reached: max ${limitOf(dragType)} "${presetOf(dragType).name}"`);
     return;
   }
   drag.active = true;
@@ -1192,7 +1204,7 @@ function syncDialog() {
   $('fResidenti').disabled = !hotel;
   $('fMinuti').disabled = !hotel;
   const effect = currentEffect();
-  $('lblQuantita').textContent = effect ? EFFECT_LABELS[effect] + (effect === 'piazzole' ? ' (%)' : '') : 'Quantità';
+  $('lblQuantita').textContent = effect ? EFFECT_LABELS[effect] + (effect === 'piazzole' ? ' (%)' : '') : 'Quantity';
   $('fQuantita').disabled = !effect || isBuilding;
   $('fQuantita').step = effect === 'hotel' ? '1' : 'any';
   $('fQuantita').max = effect === 'piazzole' ? String(MAX_REDUCTION) : '1000000';
@@ -1227,7 +1239,7 @@ function fillTypeForm(type) {
 
 function openTypeDialog(id) {
   editingId = id ?? null;
-  $('dialogTitle').textContent = id ? 'Modifica tipologia' : 'Nuova tipologia';
+  $('dialogTitle').textContent = id ? 'Edit type' : 'New type';
   fillTypeForm(id ? typeOf(id) : sanitizeType({ name: '' }));
   if (!id) {
     $('fName').value = '';
@@ -1239,7 +1251,7 @@ function openTypeDialog(id) {
 
 function presetInfo(preset) {
   if (preset.effetto) return EFFECT_LABELS[preset.effetto];
-  if (preset.hotel) return `Passeggeri: ${preset.residenti} ogni ${formatDuration(preset.minuti)}`;
+  if (preset.hotel) return `Passengers: ${preset.residenti} every ${formatDuration(preset.minuti)}`;
   return '';
 }
 
@@ -1262,6 +1274,117 @@ function renderPresets() {
   for (const tab of presetTabs.children) tab.setAttribute('aria-selected', String(tab.dataset.category === presetCategory));
   presetGrid.replaceChildren(...PRESETS.filter(p => p.category === presetCategory).map(createPresetCard));
   presetGrid.scrollTop = 0;
+}
+
+function vehicleGroup(v) {
+  return v.type === 'cargo' ? 'cargo' : v.category;
+}
+
+function vehicleStats(v) {
+  const aircoins = v.reward.aircoins ?? 0;
+  if (v.type === 'cargo') return [{ label: 'XP', value: v.reward.xp }, { label: 'Goods', value: v.reward.goods ?? 0 }];
+  return [
+    { label: 'XP', value: v.reward.xp },
+    { label: 'Aircoins', value: aircoins },
+    { label: 'Aircoins/pax', value: aircoins / v.cost.amount }
+  ];
+}
+
+function computeVehicleBadges() {
+  const bands = new Map();
+  for (const v of VEHICLES) {
+    const key = vehicleGroup(v) + '|' + v.flightTimeMinutes;
+    if (!bands.has(key)) bands.set(key, []);
+    bands.get(key).push(v);
+  }
+  const badges = new Map(VEHICLES.map(v => [v, []]));
+  for (const band of bands.values()) {
+    const stats = new Map(band.map(v => [v, vehicleStats(v)]));
+    stats.get(band[0]).forEach((stat, i) => {
+      const max = Math.max(...band.map(v => stats.get(v)[i].value));
+      if (max <= 0) return;
+      for (const v of band) if (stats.get(v)[i].value === max) badges.get(v).push('Top ' + stat.label);
+    });
+  }
+  return badges;
+}
+
+const VEHICLE_BADGES = computeVehicleBadges();
+
+function formatSeconds(s) {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return r === 0 ? `${m}min` : `${m}min${r}s`;
+}
+
+function vehiclePriceLine(v) {
+  if (v.price) return `${formatPrice(v.price.amount)} ${v.price.currency === 'aircash' ? 'Aircash' : 'Aircoins'}`;
+  return v.constructionHallLevel != null ? `Construction Hall lvl ${v.constructionHallLevel}` : 'Not for sale';
+}
+
+function createVehicleCard(v) {
+  const card = el('div', 'vehicle-card');
+  card.title = v.notes ? `${v.name} · ${v.notes}` : v.name;
+  const icon = createIconImg(v.icon, 'vehicle-icon', () => icon.replaceWith(createInitials(v)));
+  const group = vehicleGroup(v);
+  const kind = v.type === 'cargo' ? VEHICLE_CATEGORY_SHORT[v.category] ?? VEHICLE_GROUP_LABELS[v.category] : 'Passenger';
+  const time = formatDuration(v.flightTimeMinutes);
+  card.append(icon, el('span', 'preset-name', v.name), el('span', 'inv-dim', `${VEHICLE_GROUP_LABELS[group]} · ${kind}`));
+  card.append(el('span', 'inv-dim', v.serviceTimeSeconds != null ? `${time} · service ${formatSeconds(v.serviceTimeSeconds)}` : time));
+  card.append(el('span', 'inv-dim', v.cost.resource === 'passengers' ? `${v.cost.amount} passengers` : `${formatPrice(v.cost.amount)} Aircoins`));
+  const reward = [];
+  if (v.reward.aircoins != null) reward.push(`${formatPrice(v.reward.aircoins)} Aircoins`);
+  if (v.reward.goods != null) reward.push(`${formatPrice(v.reward.goods)} Goods`);
+  reward.push(`${v.reward.xp} XP`);
+  card.append(el('span', 'inv-dim', reward.join(' · ')), el('span', 'inv-dim', vehiclePriceLine(v)));
+  if (v.unlockLevel != null) card.append(el('span', 'inv-dim', `Lvl ${v.unlockLevel}`));
+  if (v.notes) card.append(el('span', 'inv-dim', v.notes));
+  const badges = VEHICLE_BADGES.get(v);
+  if (badges.length) {
+    const row = el('div', 'vehicle-badges');
+    for (const label of badges) {
+      const chip = el('span', 'vehicle-badge', label);
+      chip.title = `Best ${label.slice(4)} among ${VEHICLE_GROUP_PLURALS[group]} with ${time} flights`;
+      row.append(chip);
+    }
+    card.append(row);
+  }
+  return card;
+}
+
+function inVehicleGroup(v) {
+  return vehicleGroupFilter === 'all' || vehicleGroup(v) === vehicleGroupFilter;
+}
+
+function renderVehicleDurations() {
+  const durations = [...new Set(VEHICLES.filter(inVehicleGroup).map(v => v.flightTimeMinutes))].sort((a, b) => a - b);
+  if (!durations.includes(Number(vehicleDuration))) vehicleDuration = '';
+  vehicleDurationSelect.replaceChildren(new Option('All durations', ''), ...durations.map(d => new Option(formatDuration(d), String(d))));
+  vehicleDurationSelect.value = vehicleDuration;
+}
+
+function vehicleLevelKey(v) {
+  return [v.unlockLevel == null ? 1 : 0, v.unlockLevel ?? v.constructionHallLevel ?? Infinity];
+}
+
+function compareVehicles(a, b) {
+  if (vehicleSort === 'level') {
+    const [ga, la] = vehicleLevelKey(a);
+    const [gb, lb] = vehicleLevelKey(b);
+    return ga - gb || (la === lb ? 0 : la < lb ? -1 : 1) || a.name.localeCompare(b.name, 'en');
+  }
+  return (b.reward[vehicleSort] ?? 0) - (a.reward[vehicleSort] ?? 0) || a.name.localeCompare(b.name, 'en');
+}
+
+function renderVehicles() {
+  for (const tab of vehicleTabs.children) tab.setAttribute('aria-selected', String(tab.dataset.group === vehicleGroupFilter));
+  const list = VEHICLES
+    .filter(v => inVehicleGroup(v) && (vehicleDuration === '' || v.flightTimeMinutes === Number(vehicleDuration)))
+    .sort(compareVehicles);
+  if (list.length) vehicleGrid.replaceChildren(...list.map(createVehicleCard));
+  else vehicleGrid.replaceChildren(el('p', 'hint', 'No planes match the selected filters'));
+  vehicleGrid.scrollTop = 0;
 }
 
 function readTypeForm() {
@@ -1301,6 +1424,27 @@ $('choosePreset').addEventListener('click', () => {
   presetCategory = $('fCategory').value;
   renderPresets();
   presetDialog.showModal();
+});
+$('openVehicles').addEventListener('click', () => {
+  renderVehicleDurations();
+  renderVehicles();
+  vehicleDialog.showModal();
+});
+$('closeVehicles').addEventListener('click', () => vehicleDialog.close());
+vehicleTabs.addEventListener('click', e => {
+  const tab = e.target.closest('[data-group]');
+  if (!tab) return;
+  vehicleGroupFilter = tab.dataset.group;
+  renderVehicleDurations();
+  renderVehicles();
+});
+vehicleDurationSelect.addEventListener('change', () => {
+  vehicleDuration = vehicleDurationSelect.value;
+  renderVehicles();
+});
+vehicleSortSelect.addEventListener('change', () => {
+  vehicleSort = vehicleSortSelect.value;
+  renderVehicles();
 });
 $('clearIcon').addEventListener('click', () => setFormIcon(''));
 $('closePreset').addEventListener('click', () => presetDialog.close());
@@ -1363,7 +1507,7 @@ function importJSON(file) {
       imported = null;
     }
     if (!imported) {
-      showMsg('File non valido');
+      showMsg('Invalid file');
       return;
     }
     state = imported;
@@ -1371,10 +1515,10 @@ function importJSON(file) {
     const moved = normalizePlacements();
     zoom = 1;
     otherView = null;
-    commit(joinMessages(syncedMessage(synced), movedMessage(moved), limitMessage()) ?? 'Importazione completata');
+    commit(joinMessages(syncedMessage(synced), movedMessage(moved), limitMessage()) ?? 'Import completed');
     centerBoard();
   };
-  reader.onerror = () => showMsg('Impossibile leggere il file');
+  reader.onerror = () => showMsg('Unable to read the file');
   reader.readAsText(file);
 }
 
@@ -1402,7 +1546,7 @@ document.addEventListener('keydown', e => {
     endDrag();
     return;
   }
-  if (e.key !== 'Escape' || dialog.open || presetDialog.open) return;
+  if (e.key !== 'Escape' || dialog.open || presetDialog.open || vehicleDialog.open) return;
   if (menuOpen) setMenuOpen(false);
   if (!removeMenu.hidden) {
     setRemoveMenuOpen(false);

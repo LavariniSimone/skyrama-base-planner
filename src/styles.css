@@ -91,6 +91,57 @@ select {
   background-position: right 10px center;
   background-size: 16px;
 }
+@supports (appearance: base-select) {
+  select, ::picker(select) { appearance: base-select; }
+  select {
+    gap: 8px;
+    padding-right: 10px;
+    background-image: none;
+    cursor: pointer;
+  }
+  select:open { border-color: var(--accent); }
+  select::picker-icon {
+    content: '';
+    width: 16px;
+    height: 16px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237d8ca3' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") center / 16px no-repeat;
+    transition: rotate .22s var(--ease-open);
+  }
+  select:open::picker-icon { rotate: 180deg; }
+  ::picker(select) {
+    max-height: min(320px, 50vh);
+    margin-block: 6px;
+    padding: 6px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    color: var(--fg);
+    box-shadow: var(--shadow-pop), var(--shadow-card);
+    opacity: 0;
+    translate: 0 -4px;
+    transition: opacity .16s ease, translate .22s var(--ease-open), display .16s allow-discrete, overlay .16s allow-discrete;
+  }
+  ::picker(select):popover-open { opacity: 1; translate: 0 0; }
+  @starting-style {
+    ::picker(select):popover-open { opacity: 0; translate: 0 -4px; }
+  }
+  select option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    font-size: 14px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color .12s;
+  }
+  select option:hover, select option:focus-visible { background: var(--shade); outline: none; }
+  select option:checked { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+  select option::checkmark { order: 1; margin-left: auto; color: var(--accent-ink); }
+}
 input[type="checkbox"] { accent-color: var(--accent); }
 button:focus-visible, input:focus-visible, select:focus-visible {
   outline: 2px solid var(--accent);
@@ -383,6 +434,8 @@ body.remove-mode .card:hover { outline: 3px solid var(--danger); outline-offset:
 .pswitch:hover:not(:disabled) { background: var(--surface); border-color: var(--border); }
 .pswitch:active:not(:disabled) { transform: none; }
 #toggleIso { box-shadow: var(--shadow-card), var(--shadow-float); flex: none; }
+#openVehicles { height: var(--switch-h); padding: 0 16px; border-radius: 999px; box-shadow: var(--shadow-card), var(--shadow-float); flex: none; }
+#openVehicles svg { width: 18px; height: 18px; flex: none; }
 #topRight { position: fixed; top: 16px; right: 16px; z-index: 20; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); }
 
 #inventory {
@@ -528,6 +581,41 @@ legend { padding: 0 6px; color: var(--muted); font-size: 11px; font-weight: 600;
 .preset-icon { width: 85px; height: 75px; object-fit: contain; }
 .preset-name { max-width: 100%; overflow: hidden; text-align: center; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .preset-info { max-width: 100%; text-align: center; }
+.preset-tabs { flex-wrap: wrap; }
+#vehicleDialog { width: min(980px, calc(100vw - 32px)); }
+.vehicle-filters { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.vehicle-filters .field { margin-bottom: 0; }
+.vehicle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  max-height: min(62vh, 620px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+  border: 1px solid var(--inset-border);
+  border-radius: 19px;
+  background: var(--inset-bg);
+}
+.vehicle-grid > .hint { grid-column: 1 / -1; margin: 0; text-align: center; }
+.vehicle-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 8px;
+  border-radius: 13px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: center;
+}
+.vehicle-icon { width: 85px; height: 75px; object-fit: contain; }
+.vehicle-card .inv-initials { width: 85px; height: 75px; }
+.vehicle-badges { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-top: 2px; }
+.vehicle-badge { padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 11px; font-weight: 600; }
 
 #cardPopup {
   position: fixed;
@@ -570,6 +658,7 @@ body.is-card-dragging, body.is-card-dragging * { cursor: grabbing !important; us
 @media (prefers-reduced-motion: reduce) {
   #menuPanel, #menuPanel.open { transition: none; }
   .dropdown-chevron { transition: none; }
+  select::picker-icon, ::picker(select), select option { transition: none; }
   #msg { transition: none; }
   dialog[open] { animation: none; }
   .card, #preview::before { transition: none; }
