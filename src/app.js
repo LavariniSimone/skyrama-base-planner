@@ -1290,26 +1290,16 @@ function vehicleStats(v) {
   ];
 }
 
-function computeVehicleBadges() {
-  const bands = new Map();
-  for (const v of VEHICLES) {
-    const key = vehicleGroup(v) + '|' + v.flightTimeMinutes;
-    if (!bands.has(key)) bands.set(key, []);
-    bands.get(key).push(v);
+function computeVehicleBadges(list) {
+  const stats = new Map(list.map(v => [v, vehicleStats(v)]));
+  const max = new Map();
+  for (const vehicleStat of stats.values()) {
+    for (const { label, value } of vehicleStat) {
+      if (value > 0 && value > (max.get(label) ?? 0)) max.set(label, value);
+    }
   }
-  const badges = new Map(VEHICLES.map(v => [v, []]));
-  for (const band of bands.values()) {
-    const stats = new Map(band.map(v => [v, vehicleStats(v)]));
-    stats.get(band[0]).forEach((stat, i) => {
-      const max = Math.max(...band.map(v => stats.get(v)[i].value));
-      if (max <= 0) return;
-      for (const v of band) if (stats.get(v)[i].value === max) badges.get(v).push('Top ' + stat.label);
-    });
-  }
-  return badges;
+  return new Map(list.map(v => [v, stats.get(v).filter(({ label, value }) => value > 0 && value === max.get(label)).map(({ label }) => 'Top ' + label)]));
 }
-
-const VEHICLE_BADGES = computeVehicleBadges();
 
 function formatSeconds(s) {
   if (s < 60) return `${s}s`;
@@ -1323,7 +1313,7 @@ function vehiclePriceLine(v) {
   return v.constructionHallLevel != null ? `Construction Hall lvl ${v.constructionHallLevel}` : 'Not for sale';
 }
 
-function createVehicleCard(v) {
+function createVehicleCard(v, badges, scope) {
   const card = el('div', 'vehicle-card');
   card.title = v.notes ? `${v.name} · ${v.notes}` : v.name;
   const icon = createIconImg(v.icon, 'vehicle-icon', () => icon.replaceWith(createInitials(v)));
@@ -1340,12 +1330,11 @@ function createVehicleCard(v) {
   card.append(el('span', 'inv-dim', reward.join(' · ')), el('span', 'inv-dim', vehiclePriceLine(v)));
   if (v.unlockLevel != null) card.append(el('span', 'inv-dim', `Lvl ${v.unlockLevel}`));
   if (v.notes) card.append(el('span', 'inv-dim', v.notes));
-  const badges = VEHICLE_BADGES.get(v);
   if (badges.length) {
     const row = el('div', 'vehicle-badges');
     for (const label of badges) {
       const chip = el('span', 'vehicle-badge', label);
-      chip.title = `Best ${label.slice(4)} among ${VEHICLE_GROUP_PLURALS[group]} with ${time} flights`;
+      chip.title = `Best ${label.slice(4)} among ${scope}`;
       row.append(chip);
     }
     card.append(row);
@@ -1380,9 +1369,12 @@ function compareVehicles(a, b) {
 function renderVehicles() {
   for (const tab of vehicleTabs.children) tab.setAttribute('aria-selected', String(tab.dataset.group === vehicleGroupFilter));
   const list = VEHICLES
-    .filter(v => inVehicleGroup(v) && (vehicleDuration === '' || v.flightTimeMinutes === Number(vehicleDuration)))
-    .sort(compareVehicles);
-  if (list.length) vehicleGrid.replaceChildren(...list.map(createVehicleCard));
+    .filter(v => inVehicleGroup(v) && (vehicleDuration === '' || v.flightTimeMinutes === Number(vehicleDuration)));
+  const badges = computeVehicleBadges(list);
+  list.sort(compareVehicles);
+  const plural = vehicleGroupFilter === 'all' ? 'planes' : VEHICLE_GROUP_PLURALS[vehicleGroupFilter];
+  const scope = `the listed ${plural}` + (vehicleDuration !== '' ? ` with ${formatDuration(Number(vehicleDuration))} flights` : '');
+  if (list.length) vehicleGrid.replaceChildren(...list.map(v => createVehicleCard(v, badges.get(v) ?? [], scope)));
   else vehicleGrid.replaceChildren(el('p', 'hint', 'No planes match the selected filters'));
   vehicleGrid.scrollTop = 0;
 }

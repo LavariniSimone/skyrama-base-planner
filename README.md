@@ -28,7 +28,7 @@ Each type has a name, a category (Airside, Landside, Decoration), a size in cell
 ### Planes
 - The «Planes» button in the top right opens the catalog of Skyrama planes with costs, rewards, price and unlock level.
 - Tabs filter by type (All, Small, Medium, Large, Cargo, Searama, Helirama); flight duration and sort order (Level, XP, Aircoins, Goods) are chosen from the dropdowns.
-- «Top» badges highlight, within each type and for each flight duration, the planes with the highest XP, Aircoins, Aircoins per passenger (passenger planes) or Goods (cargo); in case of a tie the badge goes to all of them.
+- «Top» badges are computed on the planes currently listed (selected type tab and flight duration, regardless of sort order): each badge goes to the listed plane with the highest XP, Aircoins, Aircoins per passenger (passenger planes) or Goods (cargo planes). In case of a tie the badge goes to all of them; no badge is shown when no listed plane has a positive value.
 - Icons are downloaded on first use as for presets; without a connection the cards show the initials.
 
 ### Inventory and placement
