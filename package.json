@@ -1,7 +1,7 @@
 {
   "name": "skyrama-base-planner",
   "productName": "Skyrama Base Planner",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "main": "main.js",
   "scripts": {
