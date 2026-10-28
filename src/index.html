@@ -4,12 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Skyrama Base Planner</title>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; font-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: skyicon:; style-src 'self'; font-src 'self'">
 <link rel="stylesheet" href="../node_modules/@fontsource/outfit/400.css">
 <link rel="stylesheet" href="../node_modules/@fontsource/outfit/500.css">
 <link rel="stylesheet" href="../node_modules/@fontsource/outfit/600.css">
 <link rel="stylesheet" href="../node_modules/@fontsource/outfit/700.css">
 <link rel="stylesheet" href="styles.css">
+<script src="presets.js" defer></script>
 <script src="app.js" defer></script>
 </head>
 <body>
@@ -18,24 +19,37 @@
     <div id="area" hidden></div>
     <div id="preview" hidden></div>
   </div>
+  <div id="iso" hidden><div id="isoGround"></div></div>
 </main>
+<div id="cardPopup" role="tooltip" hidden></div>
+<div id="dragGhost" hidden></div>
 
 <section id="inventory">
   <div class="inv-head">
     <h2>Inventario</h2>
-    <button type="button" id="newType" class="primary">Nuova tipologia</button>
-  </div>
-  <div class="inv-list" id="invList"></div>
-  <div id="toolbar">
-    <button type="button" id="toggleRemove" aria-pressed="false">Modalità rimozione</button>
-    <div class="dropdown">
-      <button type="button" id="removeMenuToggle" aria-haspopup="menu" aria-expanded="false" aria-controls="removeMenu">Rimuovere ... <svg class="dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
-      <div id="removeMenu" class="dropdown-menu" role="menu" hidden>
-        <button type="button" role="menuitem" id="removePiazzole">Piazzole</button>
-        <button type="button" role="menuitem" id="removeHotel">Hotel</button>
-        <button type="button" role="menuitem" id="removePotenziamenti">Potenziamenti</button>
+    <div id="invTabs" class="inv-tabs" role="tablist" aria-label="Categoria">
+      <button type="button" role="tab" data-category="airside">Airside</button>
+      <button type="button" role="tab" data-category="landside">Landside</button>
+      <button type="button" role="tab" data-category="decorazione">Decorazione</button>
+    </div>
+    <div id="toolbar">
+      <button type="button" id="toggleRemove" aria-pressed="false">Modalità rimozione</button>
+      <div class="dropdown">
+        <button type="button" id="removeMenuToggle" aria-haspopup="menu" aria-expanded="false" aria-controls="removeMenu">Rimuovere ... <svg class="dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
+        <div id="removeMenu" class="dropdown-menu" role="menu" hidden>
+          <button type="button" role="menuitem" id="removePiazzole">Servizio aerei</button>
+          <button type="button" role="menuitem" id="removeHotel">Passeggeri</button>
+          <button type="button" role="menuitem" id="removePotenziamenti">Potenziamenti</button>
+        </div>
       </div>
     </div>
+    <span class="inv-head-actions">
+      <button type="button" id="newType" class="primary" aria-label="Nuova tipologia" title="Nuova tipologia"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button type="button" id="invToggle" aria-expanded="true" aria-controls="invBody" aria-label="Comprimi inventario"><svg class="dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
+    </span>
+  </div>
+  <div class="inv-body" id="invBody">
+    <div class="inv-list" id="invList" role="tabpanel"></div>
   </div>
 </section>
 
@@ -44,12 +58,15 @@
   <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 </button>
 
+<div id="topRight">
+  <button class="pswitch" type="button" id="toggleIso" role="switch" aria-checked="false" aria-label="Vista isometrica"><span class="pswitch-thumb"></span><span class="pswitch-opt opt-a">2D</span><span class="pswitch-opt opt-b">Isometrica</span></button>
+</div>
+
 <div id="menuPanel" role="region" aria-labelledby="menuTitle" inert>
   <h1 id="menuTitle">Skyrama Base Planner</h1>
   <div class="menu-section">
     <h2>Griglia</h2>
-    <label>Colonne <input type="number" id="cols" min="20" max="56"></label>
-    <label>Righe <input type="number" id="rows" min="20" max="56"></label>
+    <label>Dimensione <input type="number" id="gridSize" min="20" max="56"></label>
     <button type="button" id="applyGrid" class="primary">Applica</button>
   </div>
   <div class="menu-section">
@@ -65,8 +82,14 @@
 <dialog id="typeDialog">
   <form id="typeForm">
     <h2 id="dialogTitle">Nuova tipologia</h2>
+    <div class="field">Icona
+      <span class="icon-actions">
+        <span id="fIconPreview" class="icon-preview" hidden></span>
+        <button type="button" id="choosePreset">Scegli tra i preset</button>
+        <button type="button" id="clearIcon" hidden>Rimuovi icona</button>
+      </span>
+    </div>
     <label class="field">Nome <input type="text" id="fName" maxlength="40" required></label>
-    <label class="field">Colore <input type="color" id="fColor"></label>
     <label class="field">Larghezza (celle) <input type="number" id="fW" min="1" max="30" required></label>
     <label class="field">Altezza (celle) <input type="number" id="fH" min="1" max="30" required></label>
     <label class="field">Tipo
@@ -75,31 +98,52 @@
         <option value="potenziamento">Potenziamento</option>
       </select>
     </label>
+    <label class="field">Categoria
+      <select id="fCategory">
+        <option value="airside">Airside</option>
+        <option value="landside">Landside</option>
+        <option value="decorazione">Decorazione</option>
+      </select>
+    </label>
 
     <fieldset id="edificioFs">
       <legend>Edificio</legend>
-      <label class="check"><input type="checkbox" id="fPiazzola"> Piazzola</label>
-      <label class="check"><input type="checkbox" id="fHotel"> Hotel</label>
+      <label class="check"><input type="checkbox" id="fPiazzola"> Servizio aerei</label>
+      <label class="check"><input type="checkbox" id="fHotel"> Passeggeri</label>
       <div id="hotelFields">
-        <label class="field">Numero di residenti <input type="number" id="fResidenti" min="0" max="1000000"></label>
-        <label class="field">Minuti per completamento <input type="number" id="fMinuti" min="1" max="100000"></label>
+        <label class="field">Numero di passeggeri <input type="number" id="fResidenti" min="0" max="1000000"></label>
+        <label class="field">Passeggeri ogni (minuti) <input type="number" id="fMinuti" min="1" max="100000"></label>
       </div>
     </fieldset>
 
     <fieldset id="potenzFs" hidden>
       <legend>Potenziamento</legend>
-      <label class="check"><input type="checkbox" id="fEffPiazzole"> Piazzole</label>
-      <label class="check"><input type="checkbox" id="fEffHotel"> Hotel</label>
-      <label class="field"><span id="lblQuantita">Quantità</span> <input type="number" id="fQuantita" min="0" max="1000000" step="any"></label>
+      <label class="check"><input type="checkbox" id="fEffPiazzole"> Riduzione tempo di servizio</label>
+      <label class="check"><input type="checkbox" id="fEffHotel"> Bonus passeggeri</label>
+      <label class="field"><span id="lblQuantita">Quantità</span> <input type="number" id="fQuantita" min="0" max="1000000" step="any" required></label>
       <label class="field">Raggio (celle) <input type="number" id="fRaggio" min="0" max="20"></label>
       <p class="hint">0 = nessun effetto, 1 = celle adiacenti</p>
     </fieldset>
 
     <div class="dialog-actions">
+      <button type="button" id="deleteType" class="danger" hidden>Elimina</button>
       <button type="button" id="cancelType">Annulla</button>
       <button type="submit" class="primary">Salva</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="presetDialog">
+  <h2>Scegli tra i preset</h2>
+  <div id="presetTabs" class="preset-tabs" role="tablist">
+    <button type="button" role="tab" data-category="airside">Airside</button>
+    <button type="button" role="tab" data-category="landside">Landside</button>
+    <button type="button" role="tab" data-category="decorazione">Decorazione</button>
+  </div>
+  <div id="presetGrid" class="preset-grid" role="tabpanel"></div>
+  <div class="dialog-actions">
+    <button type="button" id="closePreset">Chiudi</button>
+  </div>
 </dialog>
 
 </body>

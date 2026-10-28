@@ -1,28 +1,40 @@
 const STORAGE_KEY = 'griglia-card:v1';
+const INV_KEY = 'griglia-card:inv-collapsed';
 const MIN_GRID = 20;
 const MAX_GRID = 56;
 const MAX_TYPE_SIZE = 30;
 const MAX_RADIUS = 20;
+const MAX_REDUCTION = 40;
 const MIN_CELL = 8;
-const ZOOM_MAX_CELL = 24;
+const ZOOM_MAX_CELL = 36;
 const ZOOM_SPEED = 0.0015;
 const PAN_THRESHOLD = 4;
-const DEFAULT_COLOR = '#4a90e2';
+const AUTOSCROLL_EDGE = 48;
+const AUTOSCROLL_SPEED = 900;
+const AUTOSCROLL_MAX_DT = 50;
 const MSG_DURATION = 4000;
-const MAX_DEPOSIT = 999;
-const ICONS = {
-  add: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>`,
-  remove: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-width="2.4"><path d="M5 12h14"/></svg>`,
-  edit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-width="2"><path d="M12 8.00012L4 16.0001V20.0001L8 20.0001L16 12.0001M12 8.00012L14.8686 5.13146L14.8704 5.12976C15.2652 4.73488 15.463 4.53709 15.691 4.46301C15.8919 4.39775 16.1082 4.39775 16.3091 4.46301C16.5369 4.53704 16.7345 4.7346 17.1288 5.12892L18.8686 6.86872C19.2646 7.26474 19.4627 7.46284 19.5369 7.69117C19.6022 7.89201 19.6021 8.10835 19.5369 8.3092C19.4628 8.53736 19.265 8.73516 18.8695 9.13061L18.8686 9.13146L16 12.0001M12 8.00012L16 12.0001"/></svg>`,
-  delete: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-width="2"><path d="M6 6V17.8C6 18.9201 6 19.4798 6.21799 19.9076C6.40973 20.2839 6.71547 20.5905 7.0918 20.7822C7.5192 21 8.07899 21 9.19691 21H14.8031C15.921 21 16.48 21 16.9074 20.7822C17.2837 20.5905 17.5905 20.2839 17.7822 19.9076C18 19.4802 18 18.921 18 17.8031V6M6 6H8M6 6H4M8 6H16M8 6C8 5.06812 8 4.60241 8.15224 4.23486C8.35523 3.74481 8.74432 3.35523 9.23438 3.15224C9.60192 3 10.0681 3 11 3H13C13.9319 3 14.3978 3 14.7654 3.15224C15.2554 3.35523 15.6447 3.74481 15.8477 4.23486C15.9999 4.6024 16 5.06812 16 6M16 6H18M18 6H20"/></svg>`
-};
+const COMPACT_CARD = 3;
+const POPUP_GAP = 8;
+const POPUP_MARGIN = 8;
+const ISO_ICON_RATIO = 1;
+const DEFAULT_ART = { fit: 1, ax: 0.5, ay: 1, rise: ISO_ICON_RATIO };
+const ISO_MAX_K = ZOOM_MAX_CELL / Math.SQRT2;
+const PRESETS = globalThis.SKYRAMA_PRESETS ?? [];
+const PRESET_BY_ICON = new Map(PRESETS.map(p => [p.icon, p]));
+const CATEGORIES = ['airside', 'landside', 'decorazione'];
 
 const $ = id => document.getElementById(id);
 const board = $('board');
 const grid = $('grid');
+const iso = $('iso');
+const isoGround = $('isoGround');
 const preview = $('preview');
 const area = $('area');
 const invList = $('invList');
+const invTabs = $('invTabs');
+const inventory = $('inventory');
+const invBody = $('invBody');
+const invToggle = $('invToggle');
 const msgBox = $('msg');
 const dialog = $('typeDialog');
 const typeForm = $('typeForm');
@@ -30,6 +42,11 @@ const menuToggle = $('menuToggle');
 const menuPanel = $('menuPanel');
 const removeMenuToggle = $('removeMenuToggle');
 const removeMenu = $('removeMenu');
+const presetDialog = $('presetDialog');
+const presetGrid = $('presetGrid');
+const presetTabs = $('presetTabs');
+const cardPopup = $('cardPopup');
+const dragGhost = $('dragGhost');
 
 let state;
 let cellSize = 32;
@@ -39,11 +56,22 @@ let minCell = MIN_CELL;
 const offset = { x: 0, y: 0 };
 let pan = null;
 const wheel = { delta: 0, x: 0, y: 0, frame: 0 };
+const autoScroll = { frame: 0, last: 0 };
 let drag = null;
+let suppressMenu = false;
 let removeMode = false;
+let isoMode = false;
+let isoHead = 0;
+let isoFitK = 0;
+let isoK = 0;
+let otherView = null;
 let menuOpen = false;
 let editingId = null;
 let msgTimer = null;
+let formIcon = '';
+let presetCategory = 'airside';
+let invCategory = 'airside';
+const failedIcons = new Set();
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -66,6 +94,23 @@ function formatNumber(n) {
   return String(Math.round(n * 100) / 100);
 }
 
+const EFFECT_LABELS = { hotel: 'Bonus passeggeri', piazzole: 'Riduzione tempo di servizio' };
+
+function boostValue(type) {
+  return type.effetto === 'piazzole' ? `-${formatNumber(type.quantita)}%` : `+${formatNumber(type.quantita)}`;
+}
+
+function boostLabel(type) {
+  return `${boostValue(type)} ${type.effetto === 'piazzole' ? 'servizio' : 'passeggeri'}`;
+}
+
+function formatDuration(minuti) {
+  if (minuti < 60) return `${minuti}min`;
+  const h = Math.floor(minuti / 60);
+  const m = minuti % 60;
+  return m === 0 ? `${h}h` : `${h}h${String(m).padStart(2, '0')}`;
+}
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -73,13 +118,49 @@ function el(tag, className, text) {
   return node;
 }
 
+function hasIcon(type) {
+  return Boolean(type.icon) && !failedIcons.has(type.icon);
+}
+
+function createIconImg(icon, className, onError) {
+  const img = el('img', className);
+  img.alt = '';
+  img.draggable = false;
+  img.loading = 'lazy';
+  img.addEventListener('error', () => {
+    failedIcons.add(icon);
+    onError?.();
+  }, { once: true });
+  img.src = `skyicon://icon/${icon}`;
+  return img;
+}
+
 function movedMessage(count) {
   if (count === 0) return undefined;
-  return count === 1 ? '1 card spostata in deposito' : `${count} card spostate in deposito`;
+  return count === 1 ? '1 card rimossa dalla griglia' : `${count} card rimosse dalla griglia`;
+}
+
+function syncedMessage(count) {
+  if (count === 0) return undefined;
+  return count === 1 ? '1 tipologia aggiornata dai preset' : `${count} tipologie aggiornate dai preset`;
+}
+
+function joinMessages(...parts) {
+  const text = parts.filter(Boolean).join(' · ');
+  return text || undefined;
+}
+
+function limitMessage() {
+  const names = overLimitNames();
+  return names.length > 0 ? `Limite superato: ${names.join(', ')}` : undefined;
 }
 
 function defaultState() {
   return { version: 1, grid: { cols: 20, rows: 20 }, types: [], instances: [] };
+}
+
+function defaultCategory(icon, kind, hotel, piazzola) {
+  return PRESET_BY_ICON.get(icon)?.category ?? (kind === 'potenziamento' ? 'decorazione' : hotel && !piazzola ? 'landside' : 'airside');
 }
 
 function sanitizeType(raw) {
@@ -88,15 +169,18 @@ function sanitizeType(raw) {
   const isBuilding = kind === 'edificio';
   const hotel = isBuilding && Boolean(raw.hotel);
   const effetto = !isBuilding && (raw.effetto === 'piazzole' || raw.effetto === 'hotel') ? raw.effetto : '';
-  const quantita = effetto === 'hotel' ? Math.round(toAmount(raw.quantita, 1e6)) : effetto ? toAmount(raw.quantita, 1e6) : 0;
+  const icon = typeof raw.icon === 'string' && PRESET_BY_ICON.has(raw.icon) ? raw.icon : '';
+  const piazzola = isBuilding && Boolean(raw.piazzola);
+  const quantita = effetto === 'hotel' ? Math.round(toAmount(raw.quantita, 1e6)) : effetto ? toAmount(raw.quantita, MAX_REDUCTION) : 0;
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : uid(),
     name: String(raw.name ?? '').trim().slice(0, 40) || 'Senza nome',
-    color: /^#[0-9a-f]{6}$/i.test(raw.color) ? raw.color : DEFAULT_COLOR,
+    icon,
+    category: CATEGORIES.includes(raw.category) ? raw.category : defaultCategory(icon, kind, hotel, piazzola),
     w: toInt(raw.w, 1, MAX_TYPE_SIZE),
     h: toInt(raw.h, 1, MAX_TYPE_SIZE),
     kind,
-    piazzola: isBuilding && Boolean(raw.piazzola),
+    piazzola,
     hotel,
     residenti: hotel ? toInt(raw.residenti, 0, 1e6, 0) : 0,
     minuti: hotel ? toInt(raw.minuti, 1, 1e5, 1) : 0,
@@ -121,15 +205,17 @@ function sanitize(raw) {
   const instanceIds = new Set();
   for (const item of raw.instances) {
     if (!item || !typeIds.has(item.typeId)) continue;
+    const placed = Number.isInteger(item.x) && Number.isInteger(item.y) && item.x >= 0 && item.y >= 0;
+    if (!placed) continue;
     const id = typeof item.id === 'string' && item.id && !instanceIds.has(item.id) ? item.id : uid();
     instanceIds.add(id);
-    const placed = Number.isInteger(item.x) && Number.isInteger(item.y) && item.x >= 0 && item.y >= 0;
-    instances.push({ id, typeId: item.typeId, x: placed ? item.x : null, y: placed ? item.y : null, rot: placed && Boolean(item.rot) });
+    instances.push({ id, typeId: item.typeId, x: item.x, y: item.y, rot: Boolean(item.rot) });
   }
   const grid = raw.grid;
+  const size = Math.max(toInt(grid.cols, MIN_GRID, MAX_GRID, MIN_GRID), toInt(grid.rows, MIN_GRID, MAX_GRID, MIN_GRID));
   return {
     version: 1,
-    grid: { cols: toInt(grid.cols, MIN_GRID, MAX_GRID, 20), rows: toInt(grid.rows, MIN_GRID, MAX_GRID, 20) },
+    grid: { cols: size, rows: size },
     types,
     instances
   };
@@ -144,7 +230,11 @@ function loadState() {
     loaded = null;
   }
   state = loaded ?? defaultState();
-  normalizePlacements();
+  const synced = syncPresetTypes();
+  const moved = normalizePlacements();
+  if (synced > 0 || moved > 0) saveState();
+  const msg = joinMessages(syncedMessage(synced), movedMessage(moved), limitMessage());
+  if (msg) showMsg(msg);
 }
 
 function saveState() {
@@ -188,12 +278,6 @@ function rectOf(inst) {
   return { x: inst.x, y: inst.y, ...sizeOf(typeOf(inst.typeId), inst.rot) };
 }
 
-function unplace(inst) {
-  inst.x = null;
-  inst.y = null;
-  inst.rot = false;
-}
-
 function overlaps(a, b) {
   return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
@@ -210,18 +294,30 @@ function canPlace(size, x, y, ignoreId) {
 
 function normalizePlacements() {
   const accepted = [];
-  let moved = 0;
+  const kept = [];
   for (const inst of state.instances) {
-    if (!isPlaced(inst)) continue;
     const rect = rectOf(inst);
     if (inBounds(rect) && !accepted.some(other => overlaps(other, rect))) {
       accepted.push(rect);
-    } else {
-      unplace(inst);
-      moved++;
+      kept.push(inst);
     }
   }
-  return moved;
+  const removed = state.instances.length - kept.length;
+  state.instances = kept;
+  return removed;
+}
+
+function syncPresetTypes() {
+  let count = 0;
+  state.types = state.types.map(type => {
+    const preset = PRESET_BY_ICON.get(type.icon);
+    if (!preset) return type;
+    const next = sanitizeType({ ...preset, id: type.id });
+    if (JSON.stringify(next) === JSON.stringify(type)) return type;
+    count++;
+    return next;
+  });
+  return count;
 }
 
 function effectArea(type, rect) {
@@ -242,28 +338,7 @@ function bonusOf(inst, effetto) {
 }
 
 function piazzolaBonus(inst) {
-  return typeOf(inst.typeId).piazzola ? bonusOf(inst, 'piazzole') : 0;
-}
-
-function addCopies(typeId, count) {
-  for (let i = 0; i < count; i++) {
-    state.instances.push({ id: uid(), typeId, x: null, y: null, rot: false });
-  }
-  commit();
-}
-
-function removeCopies(typeId, count) {
-  const free = state.instances.filter(i => i.typeId === typeId && !isPlaced(i));
-  const ids = new Set(free.slice(0, count).map(i => i.id));
-  state.instances = state.instances.filter(i => !ids.has(i.id));
-  commit();
-}
-
-function setDeposit(typeId, count) {
-  const free = state.instances.filter(i => i.typeId === typeId && !isPlaced(i)).length;
-  if (count > free) addCopies(typeId, count - free);
-  else if (count < free) removeCopies(typeId, free - count);
-  else renderInventory();
+  return typeOf(inst.typeId).piazzola ? Math.min(MAX_REDUCTION, bonusOf(inst, 'piazzole')) : 0;
 }
 
 function saveType(data, id) {
@@ -271,16 +346,24 @@ function saveType(data, id) {
   const index = state.types.findIndex(t => t.id === type.id);
   if (index >= 0) state.types[index] = type;
   else state.types.push(type);
-  commit(movedMessage(normalizePlacements()));
+  const moved = normalizePlacements();
+  invCategory = type.category;
+  commit(movedMessage(moved));
+  return type.id;
 }
 
 function deleteType(id) {
   const type = typeOf(id);
-  const copies = state.instances.filter(i => i.typeId === id).length;
-  const suffix = copies === 0 ? '' : copies === 1 ? ' e la sua copia' : ` e le sue ${copies} copie`;
+  const placed = state.instances.filter(i => i.typeId === id).length;
+  const suffix = placed === 0 ? '' : placed === 1 ? ' e la sua card sulla griglia' : ` e le sue ${placed} card sulla griglia`;
   if (!confirm(`Eliminare "${type.name}"${suffix}?`)) return;
   state.types = state.types.filter(t => t.id !== id);
   state.instances = state.instances.filter(i => i.typeId !== id);
+  commit();
+}
+
+function createInstance(typeId, x, y, rot) {
+  state.instances.push({ id: uid(), typeId, x, y, rot });
   commit();
 }
 
@@ -305,51 +388,42 @@ function rotateInstance(instId) {
 }
 
 function toDeposit(instId) {
-  unplace(instanceOf(instId));
+  state.instances = state.instances.filter(i => i.id !== instId);
   commit();
 }
 
 function removePlacedWhere(predicate) {
-  let count = 0;
-  for (const inst of state.instances) {
-    if (isPlaced(inst) && predicate(typeOf(inst.typeId))) {
-      unplace(inst);
-      count++;
-    }
-  }
+  const before = state.instances.length;
+  state.instances = state.instances.filter(i => !predicate(typeOf(i.typeId)));
+  const count = before - state.instances.length;
   if (count === 0) {
     showMsg('Nessuna card da rimuovere');
     return;
   }
-  commit(count === 1 ? '1 card rimossa dalla griglia' : `${count} card rimosse dalla griglia`);
+  commit(movedMessage(count));
 }
 
-function resizeGrid(cols, rows) {
-  state.grid = { cols: toInt(cols, MIN_GRID, MAX_GRID, state.grid.cols), rows: toInt(rows, MIN_GRID, MAX_GRID, state.grid.rows) };
+function resizeGrid(size) {
+  const n = toInt(size, MIN_GRID, MAX_GRID, state.grid.cols);
+  state.grid = { cols: n, rows: n };
   zoom = 1;
+  otherView = null;
   commit(movedMessage(normalizePlacements()));
   centerBoard();
-}
-
-function textColor(hex) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#111827' : '#ffffff';
 }
 
 function cardLines(inst) {
   const type = typeOf(inst.typeId);
   if (type.kind === 'potenziamento') {
-    if (type.effetto === 'piazzole') return [type.name, `+${formatNumber(type.quantita)}% piazzole · r ${type.raggio}`];
-    if (type.effetto === 'hotel') return [type.name, `+${formatNumber(type.quantita)} hotel · r ${type.raggio}`];
+    if (type.effetto === 'piazzole') return [type.name, `${boostValue(type)} tempo di servizio · r ${type.raggio}`];
+    if (type.effetto === 'hotel') return [type.name, `${boostValue(type)} passeggeri · r ${type.raggio}`];
     return [type.name, 'nessun effetto'];
   }
   const lines = [type.name];
-  if (type.piazzola) lines.push(`Piazzola +${formatNumber(piazzolaBonus(inst))}%`);
+  if (type.piazzola) lines.push(`Servizio aerei -${formatNumber(piazzolaBonus(inst))}%`);
   if (type.hotel) {
     const bonus = bonusOf(inst, 'hotel');
-    lines.push(`Residenti: ${type.residenti + bonus}` + (bonus > 0 ? ` (${type.residenti} + ${bonus})` : ''));
+    lines.push(`Passeggeri: ${type.residenti + bonus}` + (bonus > 0 ? ` (${type.residenti} + ${bonus})` : ''));
   }
   return lines;
 }
@@ -357,22 +431,72 @@ function cardLines(inst) {
 function createCard(inst) {
   const type = typeOf(inst.typeId);
   const rect = rectOf(inst);
-  const lines = cardLines(inst);
   const card = el('div', 'card');
   card.dataset.id = inst.id;
-  card.draggable = !removeMode;
   card.style.gridColumn = `${rect.x + 1} / span ${rect.w}`;
   card.style.gridRow = `${rect.y + 1} / span ${rect.h}`;
-  card.style.background = type.color;
-  card.style.color = textColor(type.color);
-  card.title = lines.join('\n');
-  card.append(el('div', 'card-name', lines[0]));
-  for (const line of lines.slice(1)) card.append(el('div', 'card-info', line));
+  card.classList.add(type.kind === 'potenziamento' ? 'is-boost' : 'is-building');
+  if (hasIcon(type)) {
+    card.classList.add('has-icon');
+    card.append(createIconImg(type.icon, 'card-icon', () => {
+      hideCardPopup();
+      card.replaceWith(createCard(inst));
+    }));
+    if (Math.min(rect.w, rect.h) >= COMPACT_CARD) card.append(el('div', 'card-name', type.name));
+  } else {
+    const lines = cardLines(inst);
+    card.append(el('div', 'card-name', lines[0]));
+    for (const line of lines.slice(1)) card.append(el('div', 'card-info', line));
+  }
+  card.addEventListener('mouseenter', () => showCardPopup(inst, card));
+  card.addEventListener('mouseleave', hideCardPopup);
   if (type.kind === 'potenziamento') {
     card.addEventListener('mouseenter', () => showArea(type, rect));
     card.addEventListener('mouseleave', hideArea);
   }
   return card;
+}
+
+function openPopup(content, anchorEl) {
+  cardPopup.replaceChildren(...content);
+  cardPopup.hidden = false;
+  const anchor = anchorEl.getBoundingClientRect();
+  const popup = cardPopup.getBoundingClientRect();
+  const maxLeft = Math.max(POPUP_MARGIN, window.innerWidth - popup.width - POPUP_MARGIN);
+  const left = Math.min(maxLeft, Math.max(POPUP_MARGIN, anchor.left + (anchor.width - popup.width) / 2));
+  const above = anchor.top - popup.height - POPUP_GAP;
+  const top = above >= POPUP_MARGIN ? above : Math.min(anchor.bottom + POPUP_GAP, window.innerHeight - popup.height - POPUP_MARGIN);
+  cardPopup.style.left = `${left}px`;
+  cardPopup.style.top = `${Math.max(POPUP_MARGIN, top)}px`;
+}
+
+function showCardPopup(inst, card) {
+  const type = typeOf(inst.typeId);
+  const [name, ...infos] = cardLines(inst);
+  const content = [];
+  if (hasIcon(type)) content.push(createIconImg(type.icon, 'popup-icon'));
+  content.push(el('div', 'popup-name', name), ...infos.map(line => el('div', 'popup-info', line)));
+  openPopup(content, card);
+}
+
+function hideCardPopup() {
+  cardPopup.hidden = true;
+}
+
+function typePopupLines(type) {
+  const lines = [`${type.kind === 'edificio' ? 'Edificio' : 'Potenziamento'} · ${type.w}×${type.h}`];
+  if (type.kind === 'edificio') {
+    if (type.piazzola) lines.push('Servizio aerei');
+    if (type.hotel) lines.push(`${type.residenti} pass. / ${formatDuration(type.minuti)}`);
+  } else if (type.effetto) {
+    lines.push(boostLabel(type), `Raggio ${type.raggio}`);
+  } else {
+    lines.push('Nessun effetto');
+  }
+  lines.push(...priceLines(presetOf(type)));
+  const limit = limitOf(type);
+  lines.push(limit > 0 ? `Piazzate: ${placedByIcon(type.icon)}/${limit}` : `Piazzate: ${copiesOf(type.id).placed}`);
+  return lines;
 }
 
 function showArea(type, rect) {
@@ -393,7 +517,6 @@ function showArea(type, rect) {
   area.style.top = `${y0 * cellSize}px`;
   area.style.width = `${(x1 - x0) * cellSize}px`;
   area.style.height = `${(y1 - y0) * cellSize}px`;
-  area.style.background = type.color;
   area.hidden = false;
 }
 
@@ -415,84 +538,173 @@ function hidePreview() {
 }
 
 function renderGrid() {
+  hideCardPopup();
   hideArea();
   hidePreview();
   grid.style.setProperty('--cols', state.grid.cols);
   grid.style.setProperty('--rows', state.grid.rows);
   const cards = state.instances.filter(isPlaced).map(createCard);
   grid.replaceChildren(...cards, area, preview);
-  $('cols').value = state.grid.cols;
-  $('rows').value = state.grid.rows;
+  $('gridSize').value = state.grid.cols;
+}
+
+function isoRects() {
+  return state.instances.filter(isPlaced).map(inst => ({ inst, type: typeOf(inst.typeId), rect: rectOf(inst) }));
+}
+
+function isoSpan(r) {
+  return [r.x - r.y - r.h, r.x + r.w - r.y];
+}
+
+function mustPrecede(b, a) {
+  const [b0, b1] = isoSpan(b);
+  const [a0, a1] = isoSpan(a);
+  return b0 < a1 && a0 < b1 && (a.x >= b.x + b.w || a.y >= b.y + b.h);
+}
+
+function isoOrder(items) {
+  const rest = [...items].sort((p, q) => (p.rect.x + p.rect.y + p.rect.w + p.rect.h) - (q.rect.x + q.rect.y + q.rect.w + q.rect.h));
+  const ordered = [];
+  while (rest.length) {
+    let index = rest.findIndex(a => !rest.some(b => b !== a && mustPrecede(b.rect, a.rect)));
+    if (index < 0) index = 0;
+    ordered.push(...rest.splice(index, 1));
+  }
+  return ordered;
+}
+
+function iconArt(type) {
+  return PRESET_BY_ICON.get(type.icon)?.art ?? DEFAULT_ART;
+}
+
+function isoHeadOf(items) {
+  let head = 0;
+  for (const { type, rect: r } of items) {
+    if (hasIcon(type)) head = Math.max(head, (r.w + r.h) * iconArt(type).rise - (r.x + r.y + r.w + r.h) / 2);
+  }
+  return head;
+}
+
+function isoBox(r) {
+  return {
+    cx: state.grid.rows + r.x - r.y + (r.w - r.h) / 2,
+    cy: isoHead + (r.x + r.y) / 2 + (r.w + r.h) / 4,
+    bottom: isoHead + (r.x + r.y + r.w + r.h) / 2,
+    span: r.w + r.h
+  };
+}
+
+function copiesOf(typeId) {
+  return { placed: state.instances.filter(i => i.typeId === typeId).length };
+}
+
+function placedLabel(count) {
+  return count === 1 ? '1 piazzata' : `${count} piazzate`;
+}
+
+function presetOf(type) {
+  return PRESET_BY_ICON.get(type.icon);
+}
+
+function limitOf(type) {
+  return presetOf(type)?.limite ?? 0;
+}
+
+function placedByIcon(icon) {
+  if (!icon) return 0;
+  return state.instances.filter(i => typeOf(i.typeId).icon === icon).length;
+}
+
+function limitReached(type) {
+  return limitOf(type) > 0 && placedByIcon(type.icon) >= limitOf(type);
+}
+
+function formatPrice(n) {
+  return n.toLocaleString('it-IT');
+}
+
+function priceLines(preset) {
+  if (!preset) return [];
+  if (preset.premio) return [`Premio: ${preset.premio}`];
+  const lines = [];
+  if (preset.aircoins) lines.push(`${formatPrice(preset.aircoins)} Aircoins`);
+  if (preset.aircash) lines.push(`${formatPrice(preset.aircash)} Aircash`);
+  return lines;
+}
+
+function priceLine(preset) {
+  return priceLines(preset).join(' · ');
+}
+
+function overLimitNames() {
+  const names = [];
+  const seen = new Set();
+  for (const inst of state.instances) {
+    const type = typeOf(inst.typeId);
+    if (!type.icon || seen.has(type.icon)) continue;
+    seen.add(type.icon);
+    const limit = limitOf(type);
+    const placed = placedByIcon(type.icon);
+    if (limit > 0 && placed > limit) names.push(`${presetOf(type).name} (${placed}/${limit})`);
+  }
+  return names;
+}
+
+function createInitials(type) {
+  const initials = type.name.split(/\s+/).filter(Boolean).slice(0, 2).map(word => word[0]).join('').toUpperCase();
+  return el('span', 'inv-initials', initials);
 }
 
 function createInventoryCard(type) {
-  const own = state.instances.filter(i => i.typeId === type.id);
-  const placed = own.filter(isPlaced).length;
-  const deposit = own.length - placed;
+  const { placed } = copiesOf(type.id);
+  const limit = limitOf(type);
+  const countLabel = limit > 0 ? `${placedByIcon(type.icon)}/${limit} piazzate` : placedLabel(placed);
 
   const card = el('div', 'inv-card');
   card.dataset.id = type.id;
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+  card.title = type.name;
+  card.setAttribute('aria-label', `${type.name}, ${countLabel}`);
+  if (limit > 0) {
+    card.classList.toggle('is-limit', placedByIcon(type.icon) === limit);
+    card.classList.toggle('is-over', placedByIcon(type.icon) > limit);
+  }
 
-  const swatch = el('span', 'swatch');
-  swatch.style.background = type.color;
-  const handle = el('span', 'inv-handle');
-  handle.draggable = deposit > 0;
-  handle.title = type.name;
-  handle.append(swatch, el('span', 'inv-name', type.name));
+  const face = el('div', 'inv-face');
+  if (hasIcon(type)) {
+    const icon = createIconImg(type.icon, 'inv-icon', () => icon.replaceWith(createInitials(type)));
+    face.append(icon);
+  } else {
+    face.append(createInitials(type));
+  }
+  face.append(el('span', 'inv-name', type.name));
+  if (type.kind === 'potenziamento' && type.effetto) face.append(el('span', 'inv-boost', boostLabel(type)));
+  face.append(el('span', 'inv-count', countLabel));
 
-  const qty = el('input');
-  qty.type = 'number';
-  qty.min = String(placed);
-  qty.max = String(MAX_DEPOSIT);
-  qty.value = own.length;
-  qty.dataset.role = 'deposit';
-  qty.setAttribute('aria-label', 'Piazzole totali');
-  qty.title = `Piazzole totali (in deposito: ${deposit})`;
+  const stats = el('div', 'inv-stats');
+  stats.append(...typePopupLines(type).map(line => el('div', 'inv-stat', line)));
 
-  const iconButton = (action, label, className = '') => {
-    const button = el('button', className);
-    button.dataset.action = action;
-    button.innerHTML = ICONS[action];
-    button.setAttribute('aria-label', label);
-    button.title = label;
-    return button;
-  };
-  const add = iconButton('add', 'Aggiungi una copia');
-  add.disabled = own.length >= MAX_DEPOSIT;
-  const remove = iconButton('remove', 'Rimuovi una copia dal deposito');
-  remove.disabled = deposit === 0;
-  const edit = iconButton('edit', 'Modifica');
-  const del = iconButton('delete', 'Elimina', 'danger');
-
-  const head = el('div', 'inv-card-head');
-  const actions = el('span', 'inv-actions');
-  actions.append(edit, del);
-  head.append(handle, actions);
-
-  const meta = el('div', 'inv-meta');
-  meta.append(el('span', 'badge', type.kind === 'edificio' ? 'Edificio' : 'Potenziamento'), el('span', 'inv-dim', `${type.w}×${type.h}`));
-
-  const stepper = el('span', 'inv-stepper');
-  stepper.append(remove, qty, add);
-  const foot = el('div', 'inv-foot');
-  foot.append(el('span', 'inv-count', `Piazzate: ${placed}`), stepper);
-
-  card.append(head, meta, foot);
+  card.append(face, stats);
   return card;
 }
 
 function renderInventory() {
-  if (state.types.length === 0) {
-    invList.replaceChildren(el('p', 'inv-empty', 'Nessuna tipologia: creane una con «Nuova tipologia».'));
+  for (const tab of invTabs.children) tab.setAttribute('aria-selected', String(tab.dataset.category === invCategory));
+  const types = state.types.filter(t => t.category === invCategory);
+  if (types.length === 0) {
+    invList.replaceChildren(el('p', 'inv-empty', 'Nessuna tipologia in questa categoria: creane una con +'));
     return;
   }
-  invList.replaceChildren(...state.types.map(createInventoryCard));
+  invList.replaceChildren(...types.map(createInventoryCard));
 }
 
 function layout() {
-  const style = getComputedStyle(board);
-  const availW = board.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-  const availH = board.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+  if (isoMode) {
+    layoutIso();
+    return;
+  }
+  const { w: availW, h: availH } = boardArea();
   const fit = Math.floor(availW / state.grid.cols);
   const base = Math.min(ZOOM_MAX_CELL, Math.max(MIN_CELL, fit));
   baseCell = base;
@@ -505,13 +717,15 @@ function boardArea() {
   const style = getComputedStyle(board);
   const padX = parseFloat(style.paddingLeft);
   const padY = parseFloat(style.paddingTop);
+  const cover = inventory.hidden ? 0 : Math.max(0, board.getBoundingClientRect().bottom - inventory.getBoundingClientRect().top);
+  const u = state.grid.cols + state.grid.rows;
   return {
     padX,
     padY,
     w: board.clientWidth - padX - parseFloat(style.paddingRight),
-    h: board.clientHeight - padY - parseFloat(style.paddingBottom),
-    gridW: state.grid.cols * cellSize,
-    gridH: state.grid.rows * cellSize
+    h: board.clientHeight - padY - parseFloat(style.paddingBottom) - cover,
+    gridW: isoMode ? u * isoK : state.grid.cols * cellSize,
+    gridH: isoMode ? (u / 2 + isoHead) * isoK : state.grid.rows * cellSize
   };
 }
 
@@ -521,35 +735,132 @@ function clampAxis(value, pad, avail, size) {
   return Math.min(Math.max(a, b), Math.max(Math.min(a, b), value));
 }
 
+function unitSize() {
+  return isoMode ? isoK : cellSize;
+}
+
+function zoomRange() {
+  if (isoMode) return { min: 1, max: isoFitK > 0 ? Math.max(isoFitK, ISO_MAX_K) / isoFitK : 1 };
+  return { min: minCell / baseCell, max: ZOOM_MAX_CELL / baseCell };
+}
+
+function swapView() {
+  const current = { zoom, x: offset.x, y: offset.y };
+  if (otherView) {
+    zoom = otherView.zoom;
+    offset.x = otherView.x;
+    offset.y = otherView.y;
+  } else {
+    zoom = 1;
+  }
+  otherView = current;
+}
+
 function setOffset(x, y) {
   const a = boardArea();
-  offset.x = a.gridW <= a.w ? a.padX : clampAxis(x, a.padX, a.w, a.gridW);
-  offset.y = a.gridH <= a.h ? a.padY : clampAxis(y, a.padY, a.h, a.gridH);
-  grid.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+  offset.x = a.gridW <= a.w ? a.padX + (a.w - a.gridW) / 2 : clampAxis(x, a.padX, a.w, a.gridW);
+  offset.y = a.gridH <= a.h ? a.padY + (a.h - a.gridH) / 2 : clampAxis(y, a.padY, a.h, a.gridH);
+  (isoMode ? iso : grid).style.transform = `translate(${offset.x}px, ${offset.y}px)`;
 }
 
 function applyZoom(next, clientX, clientY) {
   const rect = board.getBoundingClientRect();
   const px = clientX - rect.left;
   const py = clientY - rect.top;
-  const ux = (px - offset.x) / cellSize;
-  const uy = (py - offset.y) / cellSize;
-  zoom = Math.min(ZOOM_MAX_CELL / baseCell, Math.max(minCell / baseCell, next));
+  const unit = unitSize();
+  const ux = unit > 0 ? (px - offset.x) / unit : 0;
+  const uy = unit > 0 ? (py - offset.y) / unit : 0;
+  const { min, max } = zoomRange();
+  zoom = Math.min(max, Math.max(min, next));
   layout();
-  setOffset(px - ux * cellSize, py - uy * cellSize);
+  setOffset(px - ux * unitSize(), py - uy * unitSize());
+}
+
+function wheelUnit(e) {
+  return e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
 }
 
 function flushWheel() {
   wheel.frame = 0;
+  hideCardPopup();
   const factor = Math.exp(-wheel.delta * ZOOM_SPEED);
   wheel.delta = 0;
   applyZoom(zoom * factor, wheel.x, wheel.y);
+  if (drag?.active) updateDrag();
+}
+
+function setIsoVars(node, l, t, w) {
+  node.style.setProperty('--l', l);
+  node.style.setProperty('--t', t);
+  node.style.setProperty('--w', w);
+}
+
+function createIsoFallback({ type, rect }) {
+  const box = isoBox(rect);
+  const tile = el('div', 'iso-tile');
+  tile.style.gridColumn = `${rect.x + 1} / span ${rect.w}`;
+  tile.style.gridRow = `${rect.y + 1} / span ${rect.h}`;
+  tile.classList.toggle('is-boost', type.kind === 'potenziamento');
+  const label = el('div', 'iso-label', type.name);
+  setIsoVars(label, box.cx, box.cy, box.span);
+  return [tile, label];
+}
+
+function createIsoSprite(item) {
+  const { inst, type, rect } = item;
+  const img = createIconImg(type.icon, 'iso-sprite', () => {
+    const [tile, label] = createIsoFallback(item);
+    isoGround.append(tile);
+    img.replaceWith(label);
+  });
+  const art = iconArt(type);
+  img.classList.toggle('is-mirrored', inst.rot !== Boolean(art.flip));
+  const box = isoBox(rect);
+  setIsoVars(img, box.cx, box.bottom, box.span);
+  img.style.setProperty('--fit', art.fit);
+  img.style.setProperty('--ax', art.ax);
+  img.style.setProperty('--ay', art.ay);
+  return img;
+}
+
+function layoutIso() {
+  const a = boardArea();
+  const u = state.grid.cols + state.grid.rows;
+  const height = u / 2 + isoHead;
+  isoFitK = Math.max(0, Math.min(a.w / u, a.h / height));
+  isoK = Math.min(Math.max(isoFitK, ISO_MAX_K), isoFitK * Math.max(1, zoom));
+  iso.style.setProperty('--k', `${isoK}px`);
+}
+
+function renderIso() {
+  const items = isoRects();
+  isoHead = isoHeadOf(items);
+  for (const node of [iso, isoGround]) {
+    node.style.setProperty('--cols', state.grid.cols);
+    node.style.setProperty('--rows', state.grid.rows);
+  }
+  iso.style.setProperty('--head', isoHead);
+  const tiles = [];
+  const sprites = [];
+  for (const item of isoOrder(items)) {
+    if (hasIcon(item.type)) {
+      sprites.push(createIsoSprite(item));
+    } else {
+      const [tile, label] = createIsoFallback(item);
+      tiles.push(tile);
+      sprites.push(label);
+    }
+  }
+  isoGround.replaceChildren(...tiles);
+  iso.replaceChildren(isoGround, ...sprites);
+  refreshLayout();
 }
 
 function render() {
   renderGrid();
   renderInventory();
   layout();
+  if (isoMode) renderIso();
 }
 
 function setRemoveMode(active) {
@@ -559,12 +870,50 @@ function setRemoveMode(active) {
   toggle.classList.toggle('active', active);
   toggle.setAttribute('aria-pressed', String(active));
   toggle.textContent = active ? 'Modalità rimozione: attiva' : 'Modalità rimozione';
-  for (const card of grid.querySelectorAll('.card')) card.draggable = !active;
+}
+
+function setIsoMode(active) {
+  swapView();
+  isoMode = active;
+  if (active) {
+    setMenuOpen(false);
+    setRemoveMenuOpen(false);
+  }
+  grid.hidden = active;
+  iso.hidden = !active;
+  inventory.hidden = active;
+  menuToggle.hidden = active;
+  $('toggleIso').setAttribute('aria-checked', String(active));
+  hideCardPopup();
+  if (active) renderIso();
+  else refreshLayout();
 }
 
 function setRemoveMenuOpen(open) {
   removeMenu.hidden = !open;
   removeMenuToggle.setAttribute('aria-expanded', String(open));
+}
+
+function setInventoryCollapsed(collapsed) {
+  inventory.classList.toggle('collapsed', collapsed);
+  invBody.hidden = collapsed;
+  invToggle.setAttribute('aria-expanded', String(!collapsed));
+  invToggle.setAttribute('aria-label', collapsed ? 'Espandi inventario' : 'Comprimi inventario');
+  if (collapsed) setRemoveMenuOpen(false);
+}
+
+function loadInvCollapsed() {
+  try {
+    return localStorage.getItem(INV_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveInvCollapsed(collapsed) {
+  try {
+    localStorage.setItem(INV_KEY, collapsed ? '1' : '0');
+  } catch {}
 }
 
 function setMenuOpen(open) {
@@ -574,7 +923,7 @@ function setMenuOpen(open) {
   menuPanel.inert = !open;
   menuToggle.setAttribute('aria-expanded', String(open));
   menuToggle.setAttribute('aria-label', open ? 'Chiudi menù' : 'Apri menù');
-  if (open) $('cols').focus();
+  if (open) $('gridSize').focus();
 }
 
 function scrollBoardTopRight() {
@@ -602,64 +951,178 @@ function cellFromEvent(e) {
   };
 }
 
+function startDrag(e, data, source) {
+  drag = {
+    ...data,
+    pointerId: e.pointerId,
+    startX: e.clientX,
+    startY: e.clientY,
+    x: e.clientX,
+    y: e.clientY,
+    active: false,
+    scrollArmed: false,
+    source
+  };
+}
+
+function activateDrag() {
+  const dragType = typeOf(drag.typeId);
+  if (!drag.instId && limitReached(dragType)) {
+    endDrag();
+    showMsg(`Limite raggiunto: massimo ${limitOf(dragType)} "${presetOf(dragType).name}"`);
+    return;
+  }
+  drag.active = true;
+  hideCardPopup();
+  hideArea();
+  grid.classList.add('is-drag-active');
+  drag.source?.classList.add('is-dragging');
+  document.body.classList.add('is-card-dragging');
+  try {
+    document.body.setPointerCapture(drag.pointerId);
+  } catch {
+    endDrag();
+    return;
+  }
+  const type = typeOf(drag.typeId);
+  dragGhost.replaceChildren(hasIcon(type) ? createIconImg(type.icon, 'ghost-icon') : type.name);
+  dragGhost.hidden = false;
+}
+
+function isInside(rect, x, y) {
+  return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+}
+
+function isOverGrid(x, y) {
+  return isInside(grid.getBoundingClientRect(), x, y)
+    && isInside(board.getBoundingClientRect(), x, y)
+    && (inventory.hidden || !isInside(inventory.getBoundingClientRect(), x, y));
+}
+
+function dragRect() {
+  const cell = cellFromEvent({ clientX: drag.x, clientY: drag.y });
+  return { x: cell.x - drag.offX, y: cell.y - drag.offY, ...sizeOf(typeOf(drag.typeId), drag.rot) };
+}
+
+function updateDrag() {
+  dragGhost.style.transform = `translate(${drag.x + 12}px, ${drag.y + 12}px)`;
+  const over = isOverGrid(drag.x, drag.y);
+  dragGhost.hidden = over;
+  hideArea();
+  if (!over) {
+    hidePreview();
+    return;
+  }
+  const type = typeOf(drag.typeId);
+  const rect = dragRect();
+  showPreview(rect, canPlace(rect, rect.x, rect.y, drag.instId));
+  if (type.kind === 'potenziamento') showArea(type, rect);
+}
+
+function rotateDrag() {
+  suppressMenu = true;
+  const type = typeOf(drag.typeId);
+  if (type.w === type.h) return;
+  drag.rot = !drag.rot;
+  [drag.offX, drag.offY] = [drag.offY, drag.offX];
+  updateDrag();
+}
+
+function dropDrag() {
+  if (!drag.active) {
+    drag = null;
+    return;
+  }
+  if (!isOverGrid(drag.x, drag.y)) {
+    endDrag();
+    return;
+  }
+  const { instId, typeId, rot } = drag;
+  const rect = dragRect();
+  endDrag();
+  if (!canPlace(rect, rect.x, rect.y, instId)) return;
+  if (instId) placeInstance(instId, rect.x, rect.y, rot);
+  else createInstance(typeId, rect.x, rect.y, rot);
+}
+
 function endDrag() {
+  stopAutoScroll();
+  if (drag?.active && document.body.hasPointerCapture(drag.pointerId)) document.body.releasePointerCapture(drag.pointerId);
   drag = null;
+  hideCardPopup();
   grid.classList.remove('is-drag-active');
   grid.querySelector('.card.is-dragging')?.classList.remove('is-dragging');
+  document.body.classList.remove('is-card-dragging');
+  dragGhost.hidden = true;
+  dragGhost.replaceChildren();
   hidePreview();
   hideArea();
 }
 
-grid.addEventListener('dragstart', e => {
-  const card = e.target.closest?.('.card');
-  if (!card || removeMode) {
-    e.preventDefault();
+function autoScrollVelocity() {
+  if (!drag?.active || isoMode) return { vx: 0, vy: 0 };
+  const r = board.getBoundingClientRect();
+  let bottom = r.bottom;
+  if (!inventory.hidden) {
+    const inv = inventory.getBoundingClientRect();
+    if (isInside(inv, drag.x, drag.y)) {
+      drag.scrollArmed = false;
+      return { vx: 0, vy: 0 };
+    }
+    bottom = Math.min(bottom, inv.top);
+  }
+  const ratio = d => Math.min(1, Math.max(0, (AUTOSCROLL_EDGE - d) / AUTOSCROLL_EDGE));
+  const vx = ratio(drag.x - r.left) - ratio(r.right - drag.x);
+  const vy = ratio(drag.y - r.top) - ratio(bottom - drag.y);
+  if (!drag.scrollArmed) {
+    if (vx === 0 && vy === 0) drag.scrollArmed = true;
+    return { vx: 0, vy: 0 };
+  }
+  return { vx, vy };
+}
+
+function autoScrollTick(now) {
+  autoScroll.frame = 0;
+  const { vx, vy } = autoScrollVelocity();
+  if (vx === 0 && vy === 0) {
+    autoScroll.last = 0;
     return;
   }
+  const dt = autoScroll.last ? Math.min(AUTOSCROLL_MAX_DT, now - autoScroll.last) : 16;
+  autoScroll.last = now;
+  const { x, y } = offset;
+  setOffset(x + vx * AUTOSCROLL_SPEED * dt / 1000, y + vy * AUTOSCROLL_SPEED * dt / 1000);
+  if (offset.x === x && offset.y === y) {
+    autoScroll.last = 0;
+    return;
+  }
+  updateDrag();
+  startAutoScroll();
+}
+
+function startAutoScroll() {
+  if (!autoScroll.frame) autoScroll.frame = requestAnimationFrame(autoScrollTick);
+}
+
+function stopAutoScroll() {
+  cancelAnimationFrame(autoScroll.frame);
+  autoScroll.frame = 0;
+  autoScroll.last = 0;
+}
+
+grid.addEventListener('pointerdown', e => {
+  const card = e.target.closest('.card');
+  if (e.button !== 0 || e.pointerType === 'touch' || removeMode || drag || !card) return;
   const inst = instanceOf(card.dataset.id);
   const rect = rectOf(inst);
   const cell = cellFromEvent(e);
-  drag = {
+  startDrag(e, {
     instId: inst.id,
     typeId: inst.typeId,
     rot: inst.rot,
     offX: Math.min(rect.w - 1, Math.max(0, cell.x - rect.x)),
     offY: Math.min(rect.h - 1, Math.max(0, cell.y - rect.y))
-  };
-  setTimeout(() => drag && card.classList.add('is-dragging'));
-  grid.classList.add('is-drag-active');
-  e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', inst.id);
-});
-
-grid.addEventListener('dragover', e => {
-  if (!drag) return;
-  e.preventDefault();
-  const type = typeOf(drag.typeId);
-  const cell = cellFromEvent(e);
-  const rect = { x: cell.x - drag.offX, y: cell.y - drag.offY, ...sizeOf(type, drag.rot) };
-  const valid = canPlace(rect, rect.x, rect.y, drag.instId);
-  e.dataTransfer.dropEffect = valid ? 'move' : 'none';
-  showPreview(rect, valid);
-  if (type.kind === 'potenziamento') showArea(type, rect);
-});
-
-grid.addEventListener('dragleave', e => {
-  if (grid.contains(e.relatedTarget)) return;
-  hidePreview();
-  hideArea();
-});
-
-grid.addEventListener('drop', e => {
-  if (!drag) return;
-  e.preventDefault();
-  const cell = cellFromEvent(e);
-  const x = cell.x - drag.offX;
-  const y = cell.y - drag.offY;
-  const { instId, rot } = drag;
-  const size = sizeOf(typeOf(drag.typeId), rot);
-  endDrag();
-  if (canPlace(size, x, y, instId)) placeInstance(instId, x, y, rot);
+  }, card);
 });
 
 grid.addEventListener('contextmenu', e => {
@@ -675,44 +1138,41 @@ grid.addEventListener('click', e => {
   if (card) toDeposit(card.dataset.id);
 });
 
-document.addEventListener('dragend', endDrag);
-
-invList.addEventListener('dragstart', e => {
-  const handle = e.target.closest?.('.inv-handle');
-  const inst = handle && handle.draggable ? state.instances.find(i => i.typeId === handle.closest('.inv-card').dataset.id && !isPlaced(i)) : null;
-  if (!inst) {
-    e.preventDefault();
-    return;
-  }
-  drag = { instId: inst.id, typeId: inst.typeId, rot: false, offX: 0, offY: 0 };
-  grid.classList.add('is-drag-active');
-  e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', inst.id);
-});
-
-invList.addEventListener('change', e => {
-  if (e.target.dataset.role !== 'deposit') return;
-  const id = e.target.closest('.inv-card').dataset.id;
-  const placed = state.instances.filter(i => i.typeId === id && isPlaced(i)).length;
-  const total = toInt(e.target.value, 0, MAX_DEPOSIT, placed);
-  setDeposit(id, Math.max(0, total - placed));
-  if (total < placed) showMsg(`Il totale non può scendere sotto le ${placed} posizionate in griglia`);
-});
-
-invList.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.target.dataset.role === 'deposit') e.target.blur();
+invList.addEventListener('pointerdown', e => {
+  const card = e.target.closest('.inv-card');
+  if (e.button !== 0 || e.pointerType === 'touch' || drag || !card) return;
+  startDrag(e, { instId: null, typeId: card.dataset.id, rot: false, offX: 0, offY: 0 }, null);
 });
 
 invList.addEventListener('click', e => {
-  const button = e.target.closest('button[data-action]');
-  if (!button) return;
-  const id = button.closest('.inv-card').dataset.id;
-  switch (button.dataset.action) {
-    case 'add': addCopies(id, 1); break;
-    case 'remove': removeCopies(id, 1); break;
-    case 'edit': openTypeDialog(id); break;
-    case 'delete': deleteType(id); break;
+  const card = e.target.closest('.inv-card');
+  if (card) openTypeDialog(card.dataset.id);
+});
+
+invList.addEventListener('keydown', e => {
+  const card = e.target.closest('.inv-card');
+  if (!card || (e.key !== 'Enter' && e.key !== ' ')) return;
+  e.preventDefault();
+  openTypeDialog(card.dataset.id);
+});
+
+invList.addEventListener('wheel', e => {
+  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+  e.preventDefault();
+  invList.scrollLeft += e.deltaY * wheelUnit(e);
+}, { passive: false });
+
+invTabs.addEventListener('click', e => {
+  const tab = e.target.closest('[data-category]');
+  if (!tab) return;
+  if (inventory.classList.contains('collapsed')) {
+    setInventoryCollapsed(false);
+    saveInvCollapsed(false);
+    refreshLayout();
   }
+  invCategory = tab.dataset.category;
+  renderInventory();
+  invList.scrollLeft = 0;
 });
 
 function currentEffect() {
@@ -732,20 +1192,28 @@ function syncDialog() {
   $('fResidenti').disabled = !hotel;
   $('fMinuti').disabled = !hotel;
   const effect = currentEffect();
-  $('lblQuantita').textContent = effect === 'piazzole' ? 'Bonus piazzole (%)' : effect === 'hotel' ? 'Bonus residenti' : 'Quantità';
+  $('lblQuantita').textContent = effect ? EFFECT_LABELS[effect] + (effect === 'piazzole' ? ' (%)' : '') : 'Quantità';
   $('fQuantita').disabled = !effect || isBuilding;
   $('fQuantita').step = effect === 'hotel' ? '1' : 'any';
+  $('fQuantita').max = effect === 'piazzole' ? String(MAX_REDUCTION) : '1000000';
 }
 
-function openTypeDialog(id) {
-  editingId = id ?? null;
-  const type = id ? typeOf(id) : sanitizeType({ name: '', color: DEFAULT_COLOR });
-  $('dialogTitle').textContent = id ? 'Modifica tipologia' : 'Nuova tipologia';
-  $('fName').value = id ? type.name : '';
-  $('fColor').value = type.color;
+function setFormIcon(icon) {
+  formIcon = icon;
+  const preview = $('fIconPreview');
+  preview.replaceChildren();
+  if (icon) preview.append(createIconImg(icon, 'icon-preview-img', () => preview.replaceChildren()));
+  preview.hidden = !icon;
+  $('clearIcon').hidden = !icon;
+}
+
+function fillTypeForm(type) {
+  $('fName').value = type.name;
+  setFormIcon(type.icon);
   $('fW').value = type.w;
   $('fH').value = type.h;
   $('fKind').value = type.kind;
+  $('fCategory').value = type.category;
   $('fPiazzola').checked = type.piazzola;
   $('fHotel').checked = type.hotel;
   $('fResidenti').value = type.residenti;
@@ -755,16 +1223,55 @@ function openTypeDialog(id) {
   $('fQuantita').value = type.quantita;
   $('fRaggio').value = type.raggio;
   syncDialog();
+}
+
+function openTypeDialog(id) {
+  editingId = id ?? null;
+  $('dialogTitle').textContent = id ? 'Modifica tipologia' : 'Nuova tipologia';
+  fillTypeForm(id ? typeOf(id) : sanitizeType({ name: '' }));
+  if (!id) {
+    $('fName').value = '';
+    $('fCategory').value = invCategory;
+  }
+  $('deleteType').hidden = !id;
   dialog.showModal();
+}
+
+function presetInfo(preset) {
+  if (preset.effetto) return EFFECT_LABELS[preset.effetto];
+  if (preset.hotel) return `Passeggeri: ${preset.residenti} ogni ${formatDuration(preset.minuti)}`;
+  return '';
+}
+
+function createPresetCard(preset) {
+  const card = el('button', 'preset-card');
+  card.type = 'button';
+  card.dataset.icon = preset.icon;
+  card.title = preset.name;
+  const icon = createIconImg(preset.icon, 'preset-icon', () => icon.remove());
+  card.append(icon, el('span', 'preset-name', preset.name), el('span', 'inv-dim', `${preset.w}×${preset.h}`));
+  const info = presetInfo(preset);
+  if (info) card.append(el('span', 'inv-dim preset-info', info));
+  const price = priceLine(preset);
+  if (price) card.append(el('span', 'inv-dim preset-info', price));
+  if (preset.limite) card.append(el('span', 'inv-dim preset-info', `Max ${preset.limite}`));
+  return card;
+}
+
+function renderPresets() {
+  for (const tab of presetTabs.children) tab.setAttribute('aria-selected', String(tab.dataset.category === presetCategory));
+  presetGrid.replaceChildren(...PRESETS.filter(p => p.category === presetCategory).map(createPresetCard));
+  presetGrid.scrollTop = 0;
 }
 
 function readTypeForm() {
   return {
     name: $('fName').value,
-    color: $('fColor').value,
+    icon: formIcon,
     w: $('fW').value,
     h: $('fH').value,
     kind: $('fKind').value,
+    category: $('fCategory').value,
     piazzola: $('fPiazzola').checked,
     hotel: $('fHotel').checked,
     residenti: $('fResidenti').value,
@@ -786,16 +1293,48 @@ $('fEffHotel').addEventListener('change', () => {
   syncDialog();
 });
 $('cancelType').addEventListener('click', () => dialog.close());
+$('deleteType').addEventListener('click', () => {
+  deleteType(editingId);
+  if (!typeOf(editingId)) dialog.close();
+});
+$('choosePreset').addEventListener('click', () => {
+  presetCategory = $('fCategory').value;
+  renderPresets();
+  presetDialog.showModal();
+});
+$('clearIcon').addEventListener('click', () => setFormIcon(''));
+$('closePreset').addEventListener('click', () => presetDialog.close());
+presetTabs.addEventListener('click', e => {
+  const tab = e.target.closest('[data-category]');
+  if (!tab) return;
+  presetCategory = tab.dataset.category;
+  renderPresets();
+});
+presetGrid.addEventListener('click', e => {
+  const card = e.target.closest('.preset-card');
+  if (!card) return;
+  fillTypeForm(sanitizeType(PRESET_BY_ICON.get(card.dataset.icon)));
+  $('fQuantita').value = '';
+  presetDialog.close();
+});
 typeForm.addEventListener('submit', e => {
   e.preventDefault();
-  saveType(readTypeForm(), editingId);
+  const id = saveType(readTypeForm(), editingId);
   dialog.close();
+  invList.querySelector(`[data-id="${id}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 });
 
 $('newType').addEventListener('click', () => openTypeDialog());
-$('applyGrid').addEventListener('click', () => resizeGrid($('cols').value, $('rows').value));
+$('applyGrid').addEventListener('click', () => resizeGrid($('gridSize').value));
+invToggle.addEventListener('click', () => {
+  const next = !inventory.classList.contains('collapsed');
+  setInventoryCollapsed(next);
+  saveInvCollapsed(next);
+  refreshLayout();
+});
 
 $('toggleRemove').addEventListener('click', () => setRemoveMode(!removeMode));
+$('toggleIso').addEventListener('click', () => setIsoMode(!isoMode));
 $('removePiazzole').addEventListener('click', () => removePlacedWhere(t => t.kind === 'edificio' && t.piazzola));
 $('removeHotel').addEventListener('click', () => removePlacedWhere(t => t.kind === 'edificio' && t.hotel));
 $('removePotenziamenti').addEventListener('click', () => removePlacedWhere(t => t.kind === 'potenziamento'));
@@ -828,9 +1367,11 @@ function importJSON(file) {
       return;
     }
     state = imported;
+    const synced = syncPresetTypes();
     const moved = normalizePlacements();
     zoom = 1;
-    commit(movedMessage(moved) ?? 'Importazione completata');
+    otherView = null;
+    commit(joinMessages(syncedMessage(synced), movedMessage(moved), limitMessage()) ?? 'Importazione completata');
     centerBoard();
   };
   reader.onerror = () => showMsg('Impossibile leggere il file');
@@ -857,7 +1398,11 @@ document.addEventListener('pointerdown', e => {
   if (!removeMenu.hidden && !removeMenu.parentElement.contains(e.target)) setRemoveMenuOpen(false);
 });
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || dialog.open) return;
+  if (e.key === 'Escape' && drag) {
+    endDrag();
+    return;
+  }
+  if (e.key !== 'Escape' || dialog.open || presetDialog.open) return;
   if (menuOpen) setMenuOpen(false);
   if (!removeMenu.hidden) {
     setRemoveMenuOpen(false);
@@ -867,8 +1412,7 @@ document.addEventListener('keydown', e => {
 
 board.addEventListener('wheel', e => {
   e.preventDefault();
-  const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
-  wheel.delta += e.deltaY * unit;
+  wheel.delta += e.deltaY * wheelUnit(e);
   wheel.x = e.clientX;
   wheel.y = e.clientY;
   if (!wheel.frame) wheel.frame = requestAnimationFrame(flushWheel);
@@ -895,6 +1439,7 @@ board.addEventListener('pointermove', e => {
   if (!pan.active) {
     if (Math.hypot(dx, dy) < PAN_THRESHOLD) return;
     pan.active = true;
+    hideCardPopup();
     board.classList.add('is-panning');
   }
   const a = boardArea();
@@ -911,9 +1456,54 @@ board.addEventListener('pointerup', endPan);
 board.addEventListener('pointercancel', endPan);
 board.addEventListener('lostpointercapture', endPan);
 
+window.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  drag.x = e.clientX;
+  drag.y = e.clientY;
+  if (!(e.buttons & 1)) {
+    dropDrag();
+    return;
+  }
+  if (!drag.active) {
+    if (Math.hypot(drag.x - drag.startX, drag.y - drag.startY) < PAN_THRESHOLD) return;
+    activateDrag();
+    if (!drag) return;
+  }
+  if (e.button === 2 && (e.buttons & 2)) rotateDrag();
+  else updateDrag();
+  startAutoScroll();
+});
+
+window.addEventListener('pointerup', e => {
+  if (!drag || e.pointerId !== drag.pointerId || e.button !== 0) return;
+  drag.x = e.clientX;
+  drag.y = e.clientY;
+  dropDrag();
+});
+
+window.addEventListener('pointercancel', () => {
+  if (drag) endDrag();
+});
+
+document.body.addEventListener('lostpointercapture', () => {
+  if (drag?.active) endDrag();
+});
+
+window.addEventListener('blur', () => {
+  if (drag) endDrag();
+});
+
+document.addEventListener('contextmenu', e => {
+  if (!drag?.active && !suppressMenu) return;
+  e.preventDefault();
+  e.stopPropagation();
+  suppressMenu = false;
+}, true);
+
 window.addEventListener('resize', refreshLayout);
 
 loadState();
+setInventoryCollapsed(loadInvCollapsed());
 render();
 scrollBoardTopRight();
 document.fonts?.ready.then(() => {
