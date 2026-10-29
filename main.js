@@ -12,6 +12,8 @@ const ICON_NAME = /^[a-z0-9-]+\.png$/;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_ICON_BYTES = 1024 * 1024;
 const ICON_TIMEOUT = 15000;
+const DEV = process.argv.includes('--dev');
+const DEV_RELOAD_DELAY = 100;
 const pendingIcons = new Map();
 const failedIcons = new Set();
 
@@ -71,6 +73,26 @@ function createWindow() {
   });
   win.webContents.on('will-navigate', e => e.preventDefault());
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
+  if (DEV) watchForReload(win);
+}
+
+function watchForReload(win) {
+  let timer = null;
+  const watcher = fs.watch(path.join(__dirname, 'src'), { recursive: true }, () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => win.webContents.reloadIgnoringCache(), DEV_RELOAD_DELAY);
+  });
+  win.on('closed', () => {
+    clearTimeout(timer);
+    watcher.close();
+  });
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown') return;
+    if (input.key === 'F12') win.webContents.toggleDevTools();
+    else if (input.key === 'F5' || (input.control && input.key.toLowerCase() === 'r')) win.webContents.reloadIgnoringCache();
+    else return;
+    e.preventDefault();
+  });
 }
 
 Menu.setApplicationMenu(null);

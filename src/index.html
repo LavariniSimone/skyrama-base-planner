@@ -12,17 +12,23 @@
 <link rel="stylesheet" href="styles.css">
 <script src="presets.js" defer></script>
 <script src="vehicles.js" defer></script>
+<script src="goals.js" defer></script>
 <script src="app.js" defer></script>
 </head>
 <body>
 <main id="board">
   <div id="grid">
     <div id="area" hidden></div>
-    <div id="preview" hidden></div>
+    <div id="preview" class="preview" hidden></div>
+    <div id="marquee" hidden></div>
   </div>
   <div id="iso" hidden><div id="isoGround"></div></div>
 </main>
 <div id="cardPopup" role="tooltip" hidden></div>
+<div id="cardMenu" class="dropdown-menu card-menu" role="menu" aria-label="Card actions" hidden>
+  <button type="button" role="menuitem" data-action="rotate">Rotate</button>
+  <button type="button" role="menuitem" data-action="delete">Delete</button>
+</div>
 <div id="dragGhost" hidden></div>
 
 <section id="inventory">
@@ -34,7 +40,7 @@
       <button type="button" role="tab" data-category="decorazione">Decoration</button>
     </div>
     <div id="toolbar">
-      <button type="button" id="toggleRemove" aria-pressed="false">Remove mode</button>
+      <button type="button" id="removeSelected" class="danger" hidden></button>
       <div class="dropdown">
         <button type="button" id="removeMenuToggle" aria-haspopup="menu" aria-expanded="false" aria-controls="removeMenu">Remove ... <svg class="dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
         <div id="removeMenu" class="dropdown-menu" role="menu" hidden>
@@ -45,6 +51,7 @@
       </div>
     </div>
     <span class="inv-head-actions">
+      <button type="button" id="toggleRemove" aria-pressed="false" aria-label="Remove mode" title="Remove mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6"/></svg></button>
       <button type="button" id="newType" class="primary" aria-label="New type" title="New type"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg></button>
       <button type="button" id="invToggle" aria-expanded="true" aria-controls="invBody" aria-label="Collapse inventory"><svg class="dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
     </span>
@@ -55,15 +62,9 @@
 </section>
 
 <button type="button" id="menuToggle" aria-expanded="false" aria-controls="menuPanel" aria-label="Open menu">
-  <svg class="icon-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  <svg class="icon-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
   <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 </button>
-
-<div id="topRight">
-  <button type="button" id="openVehicles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.2.4c-.2.4-.1.8.2 1.1L9 11l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.7.5 1.1.2l.4-.2c.4-.3.6-.7.5-1.2z"/></svg>Planes</button>
-  <button class="pswitch" type="button" id="toggleIso" role="switch" aria-checked="false" aria-label="Isometric view"><span class="pswitch-thumb"></span><span class="pswitch-opt opt-a">2D</span><span class="pswitch-opt opt-b">Isometric</span></button>
-</div>
-
 <div id="menuPanel" role="region" aria-labelledby="menuTitle" inert>
   <h1 id="menuTitle">Skyrama Base Planner</h1>
   <div class="menu-section">
@@ -77,6 +78,17 @@
     <button type="button" id="importBtn">Import</button>
   </div>
 </div>
+<button type="button" id="centerView" aria-label="Center grid" title="Center grid" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" x2="5" y1="12" y2="12"/><line x1="19" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="5"/><line x1="12" x2="12" y1="19" y2="22"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3"/></svg></button>
+
+<div id="topLeft">
+  <button type="button" id="openGoals"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/></svg>Goals</button>
+  <button type="button" id="openVehicles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.2.4c-.2.4-.1.8.2 1.1L9 11l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.7.5 1.1.2l.4-.2c.4-.3.6-.7.5-1.2z"/></svg>Planes</button>
+</div>
+
+<div id="topRight">
+  <button class="pswitch" type="button" id="toggleIso" role="switch" aria-checked="false" aria-label="Isometric view"><span class="pswitch-thumb"></span><span class="pswitch-opt opt-a">2D</span><span class="pswitch-opt opt-b">Isometric</span></button>
+</div>
+
 
 <input type="file" id="importFile" accept="application/json,.json" hidden>
 <span id="msg" role="status" aria-live="polite"></span>
@@ -148,16 +160,50 @@
   </div>
 </dialog>
 
+<dialog id="goalsDialog">
+  <div class="goals-title-row">
+    <h2>Main goals</h2>
+    <div class="goals-tools">
+      <span id="goalSearchCount" class="inv-dim" aria-live="polite"></span>
+      <input type="search" id="goalSearch" placeholder="Search goals" aria-label="Search goals" autocomplete="off" spellcheck="false">
+      <button type="button" id="openRequiredPlanes">Required planes</button>
+      <button type="button" id="closeGoals" class="dialog-close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+  </div>
+  <div class="goals-head">
+    <div class="goals-progress-box">
+      <div id="goalsProgress" class="goals-progress" role="progressbar" aria-label="Main goals progress" aria-valuemin="0"><div class="goals-progress-fill"></div></div>
+      <span id="goalsProgressText" class="inv-dim"></span>
+    </div>
+  </div>
+  <div id="goalRow" class="goal-row"></div>
+</dialog>
+
+<dialog id="requiredPlanesDialog">
+  <h2>Required planes</h2>
+  <p id="requiredPlanesScope" class="hint"></p>
+  <div id="requiredPlanesList" class="required-list"></div>
+  <div class="dialog-actions">
+    <button type="button" id="closeRequiredPlanes">Close</button>
+  </div>
+</dialog>
+
 <dialog id="vehicleDialog">
   <h2>Planes</h2>
-  <div id="vehicleTabs" class="preset-tabs" role="tablist">
-    <button type="button" role="tab" data-group="all">All</button>
-    <button type="button" role="tab" data-group="small">Small</button>
-    <button type="button" role="tab" data-group="medium">Medium</button>
-    <button type="button" role="tab" data-group="large">Large</button>
-    <button type="button" role="tab" data-group="cargo">Cargo</button>
-    <button type="button" role="tab" data-group="searama">Searama</button>
-    <button type="button" role="tab" data-group="ramacopter">Helirama</button>
+  <div class="vehicle-toprow">
+    <div id="vehicleTabs" class="preset-tabs" role="group" aria-label="Plane types">
+      <button type="button" aria-pressed="true" data-group="all">All</button>
+      <button type="button" aria-pressed="false" data-group="small">Small</button>
+      <button type="button" aria-pressed="false" data-group="medium">Medium</button>
+      <button type="button" aria-pressed="false" data-group="large">Large</button>
+      <button type="button" aria-pressed="false" data-group="cargo">Cargo</button>
+      <button type="button" aria-pressed="false" data-group="searama">Searama</button>
+      <button type="button" aria-pressed="false" data-group="ramacopter">Helirama</button>
+    </div>
+    <div class="preset-tabs" role="group" aria-label="Plane filters">
+      <button type="button" id="vehicleAircoinsOnly" aria-pressed="false">Aircoins only</button>
+      <button type="button" id="vehicleFavoritesOnly" aria-pressed="false">Favorites only</button>
+    </div>
   </div>
   <div class="vehicle-filters">
     <label class="field">Duration
@@ -171,8 +217,12 @@
         <option value="goods">Goods</option>
       </select>
     </label>
+    <label class="field">My level
+      <input type="number" id="vehicleLevel" min="0" max="999" step="1" inputmode="numeric" placeholder="Any">
+    </label>
   </div>
-  <div id="vehicleGrid" class="vehicle-grid" role="tabpanel"></div>
+  <div id="vehicleGrid" class="vehicle-grid"></div>
+  <div id="vehicleTip" class="tip" role="tooltip" hidden></div>
   <div class="dialog-actions">
     <button type="button" id="closeVehicles">Close</button>
   </div>

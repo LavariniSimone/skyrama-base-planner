@@ -1,5 +1,11 @@
 const STORAGE_KEY = 'griglia-card:v1';
 const INV_KEY = 'griglia-card:inv-collapsed';
+const VEHICLE_LEVEL_KEY = 'griglia-card:vehicle-level';
+const VEHICLE_AIRCOINS_KEY = 'griglia-card:vehicle-aircoins-only';
+const VEHICLE_FAVORITES_KEY = 'griglia-card:vehicle-favorites';
+const VEHICLE_FAVORITES_ONLY_KEY = 'griglia-card:vehicle-favorites-only';
+const VEHICLE_MAX_LEVEL = 999;
+const GOALS_KEY = 'griglia-card:goals-done';
 const MIN_GRID = 20;
 const MAX_GRID = 56;
 const MAX_TYPE_SIZE = 30;
@@ -23,9 +29,20 @@ const PRESETS = globalThis.SKYRAMA_PRESETS ?? [];
 const PRESET_BY_ICON = new Map(PRESETS.map(p => [p.icon, p]));
 const CATEGORIES = ['airside', 'landside', 'decorazione'];
 const VEHICLES = globalThis.SKYRAMA_VEHICLES ?? [];
+const VEHICLE_BY_NAME = new Map(VEHICLES.map(v => [v.name, v]));
+const GOALS = globalThis.SKYRAMA_GOALS ?? [];
+const GOAL_ANY_CATEGORIES = ['small', 'medium', 'large'];
+
+function normalizeSearch(text) {
+  return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/[’‘]/g, "'").replace(/\s+/g, ' ').trim();
+}
+
+const GOAL_SEARCH_TEXT = GOALS.map(g => normalizeSearch([g.name, ...g.tasks.map(t => t.text), ...g.rewards.map(r => r.text)].join(' ')));
 const VEHICLE_GROUP_LABELS = { small: 'Small', medium: 'Medium', large: 'Large', cargo: 'Cargo', searama: 'Searama', ramacopter: 'Helirama' };
+const VEHICLE_GROUP_LIST = new Intl.ListFormat('en', { type: 'conjunction' });
 const VEHICLE_GROUP_PLURALS = { small: 'small planes', medium: 'medium planes', large: 'large planes', cargo: 'cargo planes', searama: 'Searamas', ramacopter: 'Heliramas' };
 const VEHICLE_CATEGORY_SHORT = { small: 'S', medium: 'M', large: 'L' };
+const VEHICLE_COST_UNITS = { passengers: 'Passengers', aircoins: 'Aircoins' };
 
 const $ = id => document.getElementById(id);
 const board = $('board');
@@ -33,6 +50,8 @@ const grid = $('grid');
 const iso = $('iso');
 const isoGround = $('isoGround');
 const preview = $('preview');
+const marqueeBox = $('marquee');
+const removeSelectedBtn = $('removeSelected');
 const area = $('area');
 const invList = $('invList');
 const invTabs = $('invTabs');
@@ -43,6 +62,7 @@ const msgBox = $('msg');
 const dialog = $('typeDialog');
 const typeForm = $('typeForm');
 const menuToggle = $('menuToggle');
+const centerViewBtn = $('centerView');
 const menuPanel = $('menuPanel');
 const removeMenuToggle = $('removeMenuToggle');
 const removeMenu = $('removeMenu');
@@ -51,11 +71,25 @@ const presetGrid = $('presetGrid');
 const presetTabs = $('presetTabs');
 const vehicleDialog = $('vehicleDialog');
 const vehicleGrid = $('vehicleGrid');
+const vehicleTip = $('vehicleTip');
 const vehicleTabs = $('vehicleTabs');
 const vehicleDurationSelect = $('vehicleDuration');
 const vehicleSortSelect = $('vehicleSort');
+const vehicleLevelInput = $('vehicleLevel');
+const vehicleAircoinsInput = $('vehicleAircoinsOnly');
+const vehicleFavoritesInput = $('vehicleFavoritesOnly');
+const goalsDialog = $('goalsDialog');
+const goalRow = $('goalRow');
+const goalsProgress = $('goalsProgress');
+const goalsProgressText = $('goalsProgressText');
+const goalSearchInput = $('goalSearch');
+const goalSearchCount = $('goalSearchCount');
+const requiredPlanesDialog = $('requiredPlanesDialog');
+const requiredPlanesScope = $('requiredPlanesScope');
+const requiredPlanesList = $('requiredPlanesList');
 const cardPopup = $('cardPopup');
 const dragGhost = $('dragGhost');
+const cardMenu = $('cardMenu');
 
 let state;
 let cellSize = 32;
@@ -67,6 +101,12 @@ let pan = null;
 const wheel = { delta: 0, x: 0, y: 0, frame: 0 };
 const autoScroll = { frame: 0, last: 0 };
 let drag = null;
+let cardMenuTarget = null;
+let invReorder = null;
+let invReorderClickGuard = false;
+const invReorderScroll = { frame: 0, last: 0 };
+let selection = new Set();
+let marquee = null;
 let suppressMenu = false;
 let removeMode = false;
 let isoMode = false;
@@ -79,9 +119,15 @@ let editingId = null;
 let msgTimer = null;
 let formIcon = '';
 let presetCategory = 'airside';
-let vehicleGroupFilter = 'all';
+let vehicleGroupFilter = new Set();
 let vehicleDuration = '';
 let vehicleSort = 'level';
+let vehicleMaxLevel = loadVehicleLevel();
+let vehicleAircoinsOnly = loadVehicleAircoinsOnly();
+let vehicleFavorites = loadVehicleFavorites();
+let vehicleFavoritesOnly = loadVehicleFavoritesOnly();
+let goalsDone = loadGoalsDone();
+let goalQuery = '';
 let invCategory = 'airside';
 const failedIcons = new Set();
 
@@ -242,6 +288,7 @@ function loadState() {
     loaded = null;
   }
   state = loaded ?? defaultState();
+  clearSelection();
   const synced = syncPresetTypes();
   const moved = normalizePlacements();
   if (synced > 0 || moved > 0) saveState();
@@ -265,6 +312,7 @@ function showMsg(text) {
 }
 
 function commit(msg) {
+  pruneSelection();
   saveState();
   render();
   if (msg) showMsg(msg);
@@ -298,10 +346,49 @@ function inBounds(rect) {
   return rect.x >= 0 && rect.y >= 0 && rect.x + rect.w <= state.grid.cols && rect.y + rect.h <= state.grid.rows;
 }
 
-function canPlace(size, x, y, ignoreId) {
+function canPlace(size, x, y, ignore) {
   const rect = { x, y, w: size.w, h: size.h };
   if (!inBounds(rect)) return false;
-  return !state.instances.some(i => isPlaced(i) && i.id !== ignoreId && overlaps(rectOf(i), rect));
+  const ignored = ignore instanceof Set ? ignore : new Set([ignore]);
+  return !state.instances.some(i => isPlaced(i) && !ignored.has(i.id) && overlaps(rectOf(i), rect));
+}
+
+function canPlaceGroup(rects, ignoreIds) {
+  if (!rects.every(inBounds)) return false;
+  return !state.instances.some(i => isPlaced(i) && !ignoreIds.has(i.id) && rects.some(rect => overlaps(rectOf(i), rect)));
+}
+
+function syncSelectionClasses() {
+  for (const card of grid.querySelectorAll('.card')) card.classList.toggle('is-selected', selection.has(card.dataset.id));
+  syncSelectionUI();
+}
+
+function syncSelectionUI() {
+  removeSelectedBtn.hidden = isoMode || removeMode || selection.size < 2;
+  removeSelectedBtn.textContent = `Remove ${selection.size} selected`;
+}
+
+function clearSelection() {
+  if (selection.size === 0) return;
+  selection.clear();
+  syncSelectionClasses();
+}
+
+function setSelection(ids) {
+  selection = new Set(ids);
+  syncSelectionClasses();
+}
+
+function toggleSelected(id) {
+  if (!selection.delete(id)) selection.add(id);
+  syncSelectionClasses();
+}
+
+function pruneSelection() {
+  selection = new Set([...selection].filter(id => {
+    const inst = instanceOf(id);
+    return inst && isPlaced(inst);
+  }));
 }
 
 function normalizePlacements() {
@@ -364,14 +451,38 @@ function saveType(data, id) {
   return type.id;
 }
 
+function reorderTypes(category, orderedIds) {
+  const slots = [];
+  state.types.forEach((t, i) => {
+    if (t.category === category) slots.push(i);
+  });
+  const byId = new Map(slots.map(i => [state.types[i].id, state.types[i]]));
+  if (orderedIds.length !== slots.length || new Set(orderedIds).size !== slots.length || !orderedIds.every(id => byId.has(id))) return false;
+  orderedIds.forEach((id, k) => {
+    state.types[slots[k]] = byId.get(id);
+  });
+  commit();
+  return true;
+}
+
+function moveType(id, delta) {
+  const type = typeOf(id);
+  if (!type) return;
+  const ids = state.types.filter(t => t.category === type.category).map(t => t.id);
+  const from = ids.indexOf(id);
+  const to = from + delta;
+  if (to < 0 || to >= ids.length) return;
+  [ids[from], ids[to]] = [ids[to], ids[from]];
+  reorderTypes(type.category, ids);
+}
+
 function deleteType(id) {
   const type = typeOf(id);
   const placed = state.instances.filter(i => i.typeId === id).length;
   const suffix = placed === 0 ? '' : placed === 1 ? ' and its card on the grid' : ` and its ${placed} cards on the grid`;
-  if (!confirm(`Delete "${type.name}"${suffix}?`)) return;
   state.types = state.types.filter(t => t.id !== id);
   state.instances = state.instances.filter(i => i.typeId !== id);
-  commit();
+  commit(`Deleted "${type.name}"${suffix}`);
 }
 
 function createInstance(typeId, x, y, rot) {
@@ -385,6 +496,43 @@ function placeInstance(instId, x, y, rot) {
   inst.y = y;
   inst.rot = rot;
   commit();
+}
+
+function placeInstances(moves) {
+  for (const { instId, x, y, rot } of moves) {
+    const inst = instanceOf(instId);
+    inst.x = x;
+    inst.y = y;
+    inst.rot = rot;
+  }
+  commit();
+}
+
+function groupMembers(ids, pivotX, pivotY) {
+  return [...ids].map(id => {
+    const member = instanceOf(id);
+    return { instId: id, typeId: member.typeId, rot: member.rot, rx: member.x - pivotX, ry: member.y - pivotY };
+  });
+}
+
+function rotateMembers(members) {
+  for (const m of members) {
+    const memberType = typeOf(m.typeId);
+    const { h } = sizeOf(memberType, m.rot);
+    [m.rx, m.ry] = [1 - m.ry - h, m.rx];
+    if (memberType.w !== memberType.h) m.rot = !m.rot;
+  }
+}
+
+function rotateSelection(ids, cell) {
+  const members = groupMembers(ids, cell.x, cell.y);
+  rotateMembers(members);
+  const rects = members.map(m => ({ x: cell.x + m.rx, y: cell.y + m.ry, ...sizeOf(typeOf(m.typeId), m.rot) }));
+  if (!canPlaceGroup(rects, new Set(ids))) {
+    showMsg('Not enough space to rotate the selection');
+    return;
+  }
+  placeInstances(members.map((m, i) => ({ instId: m.instId, x: rects[i].x, y: rects[i].y, rot: m.rot })));
 }
 
 function rotateInstance(instId) {
@@ -413,6 +561,13 @@ function removePlacedWhere(predicate) {
     return;
   }
   commit(movedMessage(count));
+}
+
+function removeInstances(ids) {
+  const removed = new Set(ids);
+  const before = state.instances.length;
+  state.instances = state.instances.filter(i => !removed.has(i.id));
+  commit(movedMessage(before - state.instances.length));
 }
 
 function resizeGrid(size) {
@@ -448,6 +603,7 @@ function createCard(inst) {
   card.style.gridColumn = `${rect.x + 1} / span ${rect.w}`;
   card.style.gridRow = `${rect.y + 1} / span ${rect.h}`;
   card.classList.add(type.kind === 'potenziamento' ? 'is-boost' : 'is-building');
+  if (selection.has(inst.id)) card.classList.add('is-selected');
   if (hasIcon(type)) {
     card.classList.add('has-icon');
     card.append(createIconImg(type.icon, 'card-icon', () => {
@@ -489,6 +645,10 @@ function showCardPopup(inst, card) {
   if (hasIcon(type)) content.push(createIconImg(type.icon, 'popup-icon'));
   content.push(el('div', 'popup-name', name), ...infos.map(line => el('div', 'popup-info', line)));
   openPopup(content, card);
+}
+
+function showTypePopup(type, card) {
+  openPopup([el('div', 'popup-name', type.name), ...typePopupLines(type).map(line => el('div', 'popup-info', line))], card);
 }
 
 function hideCardPopup() {
@@ -536,17 +696,18 @@ function hideArea() {
   area.hidden = true;
 }
 
-function showPreview(rect, valid) {
-  preview.style.left = `${rect.x * cellSize}px`;
-  preview.style.top = `${rect.y * cellSize}px`;
-  preview.style.width = `${rect.w * cellSize}px`;
-  preview.style.height = `${rect.h * cellSize}px`;
-  preview.className = valid ? 'valid' : 'invalid';
-  preview.hidden = false;
+function showPreview(rect, valid, node = preview) {
+  node.style.left = `${rect.x * cellSize}px`;
+  node.style.top = `${rect.y * cellSize}px`;
+  node.style.width = `${rect.w * cellSize}px`;
+  node.style.height = `${rect.h * cellSize}px`;
+  node.className = valid ? 'preview valid' : 'preview invalid';
+  node.hidden = false;
 }
 
 function hidePreview() {
   preview.hidden = true;
+  drag?.previews?.forEach(node => node.hidden = true);
 }
 
 function renderGrid() {
@@ -556,7 +717,7 @@ function renderGrid() {
   grid.style.setProperty('--cols', state.grid.cols);
   grid.style.setProperty('--rows', state.grid.rows);
   const cards = state.instances.filter(isPlaced).map(createCard);
-  grid.replaceChildren(...cards, area, preview);
+  grid.replaceChildren(...cards, area, preview, marqueeBox);
   $('gridSize').value = state.grid.cols;
 }
 
@@ -676,8 +837,8 @@ function createInventoryCard(type) {
   card.dataset.id = type.id;
   card.tabIndex = 0;
   card.setAttribute('role', 'button');
-  card.title = type.name;
   card.setAttribute('aria-label', `${type.name}, ${countLabel}`);
+  card.setAttribute('aria-keyshortcuts', 'Alt+ArrowLeft Alt+ArrowRight');
   if (limit > 0) {
     card.classList.toggle('is-limit', placedByIcon(type.icon) === limit);
     card.classList.toggle('is-over', placedByIcon(type.icon) > limit);
@@ -694,10 +855,13 @@ function createInventoryCard(type) {
   if (type.kind === 'potenziamento' && type.effetto) face.append(el('span', 'inv-boost', boostLabel(type)));
   face.append(el('span', 'inv-count', countLabel));
 
-  const stats = el('div', 'inv-stats');
-  stats.append(...typePopupLines(type).map(line => el('div', 'inv-stat', line)));
+  const info = el('span', 'inv-info');
+  info.setAttribute('aria-hidden', 'true');
 
-  card.append(face, stats);
+  const grip = el('span', 'inv-grip');
+  grip.setAttribute('aria-hidden', 'true');
+  grip.title = 'Drag to reorder';
+  card.append(grip, info, face);
   return card;
 }
 
@@ -741,11 +905,6 @@ function boardArea() {
   };
 }
 
-function clampAxis(value, pad, avail, size) {
-  const a = pad;
-  const b = pad + avail - size;
-  return Math.min(Math.max(a, b), Math.max(Math.min(a, b), value));
-}
 
 function unitSize() {
   return isoMode ? isoK : cellSize;
@@ -768,11 +927,28 @@ function swapView() {
   otherView = current;
 }
 
-function setOffset(x, y) {
-  const a = boardArea();
-  offset.x = a.gridW <= a.w ? a.padX + (a.w - a.gridW) / 2 : clampAxis(x, a.padX, a.w, a.gridW);
-  offset.y = a.gridH <= a.h ? a.padY + (a.h - a.gridH) / 2 : clampAxis(y, a.padY, a.h, a.gridH);
+function isFittedView(a) {
+  return zoom <= zoomRange().min + 1e-6
+    && Math.abs(offset.x - (a.padX + (a.w - a.gridW) / 2)) <= 1
+    && Math.abs(offset.y - (a.padY + (a.h - a.gridH) / 2)) <= 1;
+}
+
+function syncCenterButton(a) {
+  centerViewBtn.hidden = isFittedView(a);
+}
+
+function setOffset(x, y, a = boardArea()) {
+  if (Number.isFinite(x)) offset.x = x;
+  if (Number.isFinite(y)) offset.y = y;
   (isoMode ? iso : grid).style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+  syncCenterButton(a);
+}
+
+function fitView() {
+  hideCardPopup();
+  zoom = zoomRange().min;
+  layout();
+  centerBoard();
 }
 
 function applyZoom(next, clientX, clientY) {
@@ -799,6 +975,7 @@ function flushWheel() {
   wheel.delta = 0;
   applyZoom(zoom * factor, wheel.x, wheel.y);
   if (drag?.active) updateDrag();
+  if (marquee?.active) updateMarqueeBox();
 }
 
 function setIsoVars(node, l, t, w) {
@@ -870,6 +1047,7 @@ function renderIso() {
 
 function render() {
   renderGrid();
+  syncSelectionUI();
   renderInventory();
   layout();
   if (isoMode) renderIso();
@@ -878,13 +1056,20 @@ function render() {
 function setRemoveMode(active) {
   removeMode = active;
   document.body.classList.toggle('remove-mode', active);
+  if (active) {
+    clearSelection();
+    closeCardMenu();
+  }
   const toggle = $('toggleRemove');
   toggle.classList.toggle('active', active);
   toggle.setAttribute('aria-pressed', String(active));
-  toggle.textContent = active ? 'Remove mode: on' : 'Remove mode';
+  const label = active ? 'Remove mode: on' : 'Remove mode';
+  toggle.setAttribute('aria-label', label);
+  toggle.title = label;
 }
 
 function setIsoMode(active) {
+  const fresh = !otherView;
   swapView();
   isoMode = active;
   if (active) {
@@ -897,8 +1082,11 @@ function setIsoMode(active) {
   menuToggle.hidden = active;
   $('toggleIso').setAttribute('aria-checked', String(active));
   hideCardPopup();
+  clearSelection();
+  closeCardMenu();
   if (active) renderIso();
   else refreshLayout();
+  if (fresh) centerBoard();
 }
 
 function setRemoveMenuOpen(open) {
@@ -928,6 +1116,82 @@ function saveInvCollapsed(collapsed) {
   } catch {}
 }
 
+function parseVehicleLevel(value) {
+  if (value === '' || value == null || !Number.isFinite(Number(value))) return '';
+  return toInt(value, 0, VEHICLE_MAX_LEVEL);
+}
+
+function loadVehicleLevel() {
+  try {
+    return parseVehicleLevel(localStorage.getItem(VEHICLE_LEVEL_KEY));
+  } catch {
+    return '';
+  }
+}
+
+function saveVehicleLevel(level) {
+  try {
+    localStorage.setItem(VEHICLE_LEVEL_KEY, String(level));
+  } catch {}
+}
+
+function loadVehicleAircoinsOnly() {
+  try {
+    return localStorage.getItem(VEHICLE_AIRCOINS_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function loadVehicleFavorites() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(VEHICLE_FAVORITES_KEY));
+    return new Set(Array.isArray(stored) ? stored.filter(name => typeof name === 'string' && VEHICLE_BY_NAME.has(name)) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveVehicleFavorites() {
+  try {
+    localStorage.setItem(VEHICLE_FAVORITES_KEY, JSON.stringify([...vehicleFavorites]));
+  } catch {}
+}
+
+function loadVehicleFavoritesOnly() {
+  try {
+    return localStorage.getItem(VEHICLE_FAVORITES_ONLY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveVehicleFavoritesOnly(only) {
+  try {
+    localStorage.setItem(VEHICLE_FAVORITES_ONLY_KEY, only ? '1' : '0');
+  } catch {}
+}
+
+function saveVehicleAircoinsOnly(only) {
+  try {
+    localStorage.setItem(VEHICLE_AIRCOINS_KEY, only ? '1' : '0');
+  } catch {}
+}
+
+function loadGoalsDone() {
+  try {
+    return toInt(localStorage.getItem(GOALS_KEY), 0, GOALS.length, 0);
+  } catch {
+    return 0;
+  }
+}
+
+function saveGoalsDone(count) {
+  try {
+    localStorage.setItem(GOALS_KEY, String(count));
+  } catch {}
+}
+
 function setMenuOpen(open) {
   if (!open && menuPanel.contains(document.activeElement)) menuToggle.focus();
   menuOpen = open;
@@ -935,22 +1199,25 @@ function setMenuOpen(open) {
   menuPanel.inert = !open;
   menuToggle.setAttribute('aria-expanded', String(open));
   menuToggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
-  if (open) $('gridSize').focus();
 }
 
 function scrollBoardTopRight() {
   const a = boardArea();
-  const x = a.gridW <= a.w ? a.padX : a.padX + a.w - a.gridW;
-  const y = a.padY;
-  setOffset(x, y);
+  const x = a.gridW <= a.w ? a.padX + (a.w - a.gridW) / 2 : a.padX + a.w - a.gridW;
+  const y = a.gridH <= a.h ? a.padY + (a.h - a.gridH) / 2 : a.padY;
+  setOffset(x, y, a);
 }
 
 function centerBoard() {
   const a = boardArea();
-  setOffset(a.padX + (a.w - a.gridW) / 2, a.padY + (a.h - a.gridH) / 2);
+  setOffset(a.padX + (a.w - a.gridW) / 2, a.padY + (a.h - a.gridH) / 2, a);
 }
 
 function refreshLayout() {
+  if (isFittedView(boardArea())) {
+    fitView();
+    return;
+  }
   const rect = board.getBoundingClientRect();
   applyZoom(zoom, rect.left + rect.width / 2, rect.top + rect.height / 2);
 }
@@ -985,10 +1252,17 @@ function activateDrag() {
     return;
   }
   drag.active = true;
+  closeCardMenu();
   hideCardPopup();
   hideArea();
   grid.classList.add('is-drag-active');
-  drag.source?.classList.add('is-dragging');
+  if (drag.group) {
+    for (const card of grid.querySelectorAll('.card')) {
+      if (drag.groupIds.has(card.dataset.id)) card.classList.add('is-dragging');
+    }
+  } else {
+    drag.source?.classList.add('is-dragging');
+  }
   document.body.classList.add('is-card-dragging');
   try {
     document.body.setPointerCapture(drag.pointerId);
@@ -998,6 +1272,15 @@ function activateDrag() {
   }
   const type = typeOf(drag.typeId);
   dragGhost.replaceChildren(hasIcon(type) ? createIconImg(type.icon, 'ghost-icon') : type.name);
+  if (drag.group) {
+    dragGhost.append(el('span', 'ghost-badge', `×${drag.group.length}`));
+    drag.previews = drag.group.map(m => {
+      if (m.instId === drag.instId) return preview;
+      const node = el('div', 'preview');
+      node.hidden = true;
+      return grid.appendChild(node);
+    });
+  }
   dragGhost.hidden = false;
 }
 
@@ -1016,6 +1299,11 @@ function dragRect() {
   return { x: cell.x - drag.offX, y: cell.y - drag.offY, ...sizeOf(typeOf(drag.typeId), drag.rot) };
 }
 
+function groupRects() {
+  const cell = cellFromEvent({ clientX: drag.x, clientY: drag.y });
+  return drag.group.map(m => ({ x: cell.x + m.rx, y: cell.y + m.ry, ...sizeOf(typeOf(m.typeId), m.rot) }));
+}
+
 function updateDrag() {
   dragGhost.style.transform = `translate(${drag.x + 12}px, ${drag.y + 12}px)`;
   const over = isOverGrid(drag.x, drag.y);
@@ -1026,14 +1314,28 @@ function updateDrag() {
     return;
   }
   const type = typeOf(drag.typeId);
+  if (drag.group) {
+    const rects = groupRects();
+    const valid = canPlaceGroup(rects, drag.groupIds);
+    drag.group.forEach((m, i) => showPreview(rects[i], valid, drag.previews[i]));
+    if (type.kind === 'potenziamento') showArea(type, rects[drag.group.findIndex(m => m.instId === drag.instId)]);
+    return;
+  }
   const rect = dragRect();
   showPreview(rect, canPlace(rect, rect.x, rect.y, drag.instId));
   if (type.kind === 'potenziamento') showArea(type, rect);
 }
 
 function rotateDrag() {
-  suppressMenu = true;
   const type = typeOf(drag.typeId);
+  if (drag.group) {
+    rotateMembers(drag.group);
+    const { h } = sizeOf(type, drag.rot);
+    [drag.offX, drag.offY] = [h - 1 - drag.offY, drag.offX];
+    if (type.w !== type.h) drag.rot = !drag.rot;
+    updateDrag();
+    return;
+  }
   if (type.w === type.h) return;
   drag.rot = !drag.rot;
   [drag.offX, drag.offY] = [drag.offY, drag.offX];
@@ -1042,6 +1344,7 @@ function rotateDrag() {
 
 function dropDrag() {
   if (!drag.active) {
+    if (drag.instId) setSelection([drag.instId]);
     drag = null;
     return;
   }
@@ -1049,7 +1352,14 @@ function dropDrag() {
     endDrag();
     return;
   }
-  const { instId, typeId, rot } = drag;
+  const { instId, typeId, rot, group, groupIds } = drag;
+  if (group) {
+    const rects = groupRects();
+    endDrag();
+    if (!canPlaceGroup(rects, groupIds)) return;
+    placeInstances(group.map((m, i) => ({ instId: m.instId, x: rects[i].x, y: rects[i].y, rot: m.rot })));
+    return;
+  }
   const rect = dragRect();
   endDrag();
   if (!canPlace(rect, rect.x, rect.y, instId)) return;
@@ -1060,10 +1370,13 @@ function dropDrag() {
 function endDrag() {
   stopAutoScroll();
   if (drag?.active && document.body.hasPointerCapture(drag.pointerId)) document.body.releasePointerCapture(drag.pointerId);
+  drag?.previews?.forEach(node => {
+    if (node !== preview) node.remove();
+  });
   drag = null;
   hideCardPopup();
   grid.classList.remove('is-drag-active');
-  grid.querySelector('.card.is-dragging')?.classList.remove('is-dragging');
+  grid.querySelectorAll('.card.is-dragging').forEach(card => card.classList.remove('is-dragging'));
   document.body.classList.remove('is-card-dragging');
   dragGhost.hidden = true;
   dragGhost.replaceChildren();
@@ -1103,7 +1416,14 @@ function autoScrollTick(now) {
   const dt = autoScroll.last ? Math.min(AUTOSCROLL_MAX_DT, now - autoScroll.last) : 16;
   autoScroll.last = now;
   const { x, y } = offset;
-  setOffset(x + vx * AUTOSCROLL_SPEED * dt / 1000, y + vy * AUTOSCROLL_SPEED * dt / 1000);
+  const a = boardArea();
+  let nx = x + vx * AUTOSCROLL_SPEED * dt / 1000;
+  let ny = y + vy * AUTOSCROLL_SPEED * dt / 1000;
+  if (vx > 0) nx = Math.min(nx, Math.max(x, a.padX));
+  else if (vx < 0) nx = Math.max(nx, Math.min(x, a.padX + a.w - a.gridW));
+  if (vy > 0) ny = Math.min(ny, Math.max(y, a.padY));
+  else if (vy < 0) ny = Math.max(ny, Math.min(y, a.padY + a.h - a.gridH));
+  setOffset(nx, ny, a);
   if (offset.x === x && offset.y === y) {
     autoScroll.last = 0;
     return;
@@ -1124,24 +1444,96 @@ function stopAutoScroll() {
 
 grid.addEventListener('pointerdown', e => {
   const card = e.target.closest('.card');
+  if (e.button === 2 && !drag) suppressMenu = false;
+  if (e.button === 1 && card && e.pointerType !== 'touch' && !removeMode && !drag) {
+    e.preventDefault();
+    rotateInstance(card.dataset.id);
+    return;
+  }
   if (e.button !== 0 || e.pointerType === 'touch' || removeMode || drag || !card) return;
+  if (e.ctrlKey || e.metaKey || e.shiftKey) {
+    toggleSelected(card.dataset.id);
+    return;
+  }
   const inst = instanceOf(card.dataset.id);
   const rect = rectOf(inst);
   const cell = cellFromEvent(e);
-  startDrag(e, {
-    instId: inst.id,
-    typeId: inst.typeId,
-    rot: inst.rot,
-    offX: Math.min(rect.w - 1, Math.max(0, cell.x - rect.x)),
-    offY: Math.min(rect.h - 1, Math.max(0, cell.y - rect.y))
-  }, card);
+  const offX = Math.min(rect.w - 1, Math.max(0, cell.x - rect.x));
+  const offY = Math.min(rect.h - 1, Math.max(0, cell.y - rect.y));
+  const data = { instId: inst.id, typeId: inst.typeId, rot: inst.rot, offX, offY };
+  if (selection.has(inst.id) && selection.size > 1) {
+    data.groupIds = new Set(selection);
+    data.group = groupMembers(selection, rect.x + offX, rect.y + offY);
+  } else if (!selection.has(inst.id)) {
+    setSelection([inst.id]);
+  }
+  startDrag(e, data, card);
 });
 
 grid.addEventListener('contextmenu', e => {
   const card = e.target.closest('.card');
   if (!card) return;
   e.preventDefault();
-  rotateInstance(card.dataset.id);
+  if (drag || removeMode || suppressMenu) {
+    suppressMenu = false;
+    return;
+  }
+  openCardMenu(card.dataset.id, e.clientX, e.clientY, cellFromEvent(e));
+});
+
+function openCardMenu(instId, x, y, cell) {
+  hideCardPopup();
+  if (!selection.has(instId)) setSelection([instId]);
+  const ids = selection.size > 1 ? [...selection] : [instId];
+  const group = ids.length > 1;
+  const type = typeOf(instanceOf(instId).typeId);
+  const rotateItem = cardMenu.querySelector('[data-action="rotate"]');
+  const deleteItem = cardMenu.querySelector('[data-action="delete"]');
+  rotateItem.textContent = group ? 'Rotate selection' : 'Rotate';
+  rotateItem.disabled = !group && type.w === type.h;
+  deleteItem.textContent = group ? `Delete ${ids.length} selected` : 'Delete';
+  cardMenuTarget = { instId, ids, cell };
+  cardMenu.hidden = false;
+  const menu = cardMenu.getBoundingClientRect();
+  const left = x + menu.width + POPUP_MARGIN > window.innerWidth ? x - menu.width : x;
+  const top = y + menu.height + POPUP_MARGIN > window.innerHeight ? y - menu.height : y;
+  cardMenu.style.left = `${Math.max(POPUP_MARGIN, left)}px`;
+  cardMenu.style.top = `${Math.max(POPUP_MARGIN, top)}px`;
+  cardMenu.querySelector('button:not(:disabled)')?.focus();
+}
+
+function closeCardMenu() {
+  if (cardMenu.hidden) return;
+  cardMenu.hidden = true;
+  cardMenuTarget = null;
+}
+
+cardMenu.addEventListener('click', e => {
+  const button = e.target.closest('[data-action]');
+  if (!button || button.disabled || !cardMenuTarget) return;
+  const { instId, ids, cell } = cardMenuTarget;
+  closeCardMenu();
+  if (!ids.every(id => instanceOf(id))) return;
+  if (button.dataset.action === 'delete') removeInstances(ids);
+  else if (ids.length > 1) rotateSelection(ids, cell);
+  else rotateInstance(instId);
+});
+
+cardMenu.addEventListener('keydown', e => {
+  if (e.key === 'Tab') {
+    closeCardMenu();
+    return;
+  }
+  const items = [...cardMenu.querySelectorAll('button:not(:disabled)')];
+  const index = items.indexOf(document.activeElement);
+  let next = -1;
+  if (e.key === 'ArrowDown') next = (index + 1) % items.length;
+  else if (e.key === 'ArrowUp') next = (index - 1 + items.length) % items.length;
+  else if (e.key === 'Home') next = 0;
+  else if (e.key === 'End') next = items.length - 1;
+  if (next < 0) return;
+  e.preventDefault();
+  items[next]?.focus();
 });
 
 grid.addEventListener('click', e => {
@@ -1150,23 +1542,164 @@ grid.addEventListener('click', e => {
   if (card) toDeposit(card.dataset.id);
 });
 
+function placeInvReorder() {
+  const { card, x } = invReorder;
+  const next = [...invList.children].find(c => {
+    if (c === card) return false;
+    const r = c.getBoundingClientRect();
+    return x < r.left + r.width / 2;
+  });
+  if (next) {
+    if (card.nextElementSibling !== next) invList.insertBefore(card, next);
+  } else if (invList.lastElementChild !== card) {
+    invList.append(card);
+  }
+}
+
+function invReorderVelocity() {
+  const r = invList.getBoundingClientRect();
+  const ratio = d => Math.min(1, Math.max(0, (AUTOSCROLL_EDGE - d) / AUTOSCROLL_EDGE));
+  const vx = ratio(invReorder.x - r.left) - ratio(r.right - invReorder.x);
+  if (!invReorder.scrollArmed) {
+    if (vx === 0) invReorder.scrollArmed = true;
+    return 0;
+  }
+  return vx;
+}
+
+function invReorderScrollTick(now) {
+  invReorderScroll.frame = 0;
+  if (!invReorder?.active) return;
+  const vx = invReorderVelocity();
+  if (vx === 0) {
+    invReorderScroll.last = 0;
+    return;
+  }
+  const dt = invReorderScroll.last ? Math.min(AUTOSCROLL_MAX_DT, now - invReorderScroll.last) : 16;
+  invReorderScroll.last = now;
+  const before = invList.scrollLeft;
+  invList.scrollLeft += vx * AUTOSCROLL_SPEED * dt / 1000;
+  if (invList.scrollLeft === before) {
+    invReorderScroll.last = 0;
+    return;
+  }
+  placeInvReorder();
+  startInvReorderScroll();
+}
+
+function startInvReorderScroll() {
+  if (!invReorderScroll.frame) invReorderScroll.frame = requestAnimationFrame(invReorderScrollTick);
+}
+
+function startInvReorder(e, card) {
+  invReorder = { pointerId: e.pointerId, card, startX: e.clientX, startY: e.clientY, x: e.clientX, active: false, scrollArmed: false };
+  invList.setPointerCapture(e.pointerId);
+}
+
+function stopInvReorder() {
+  cancelAnimationFrame(invReorderScroll.frame);
+  invReorderScroll.frame = 0;
+  invReorderScroll.last = 0;
+  const reorder = invReorder;
+  invReorder = null;
+  reorder.card.classList.remove('is-reordering');
+  invList.classList.remove('is-reordering');
+  document.body.classList.remove('is-inv-reordering');
+  if (invList.hasPointerCapture(reorder.pointerId)) invList.releasePointerCapture(reorder.pointerId);
+}
+
+function cancelInvReorder() {
+  if (!invReorder) return;
+  stopInvReorder();
+  renderInventory();
+}
+
+function finishInvReorder() {
+  if (!invReorder) return;
+  const { active } = invReorder;
+  const ids = [...invList.querySelectorAll('.inv-card')].map(c => c.dataset.id);
+  stopInvReorder();
+  if (!active) return;
+  invReorderClickGuard = true;
+  setTimeout(() => {
+    invReorderClickGuard = false;
+  }, 0);
+  if (!reorderTypes(invCategory, ids)) renderInventory();
+}
+
+invList.addEventListener('pointermove', e => {
+  if (!invReorder || e.pointerId !== invReorder.pointerId) return;
+  if (!(e.buttons & 1)) {
+    finishInvReorder();
+    return;
+  }
+  invReorder.x = e.clientX;
+  if (!invReorder.active) {
+    if (Math.hypot(e.clientX - invReorder.startX, e.clientY - invReorder.startY) < PAN_THRESHOLD) return;
+    invReorder.active = true;
+    hideCardPopup();
+    invReorder.card.classList.add('is-reordering');
+    invList.classList.add('is-reordering');
+    document.body.classList.add('is-inv-reordering');
+  }
+  placeInvReorder();
+  startInvReorderScroll();
+});
+invList.addEventListener('pointerup', e => {
+  if (invReorder && e.pointerId === invReorder.pointerId) finishInvReorder();
+});
+invList.addEventListener('pointercancel', e => {
+  if (invReorder && e.pointerId === invReorder.pointerId) cancelInvReorder();
+});
+invList.addEventListener('lostpointercapture', e => {
+  if (invReorder && e.pointerId === invReorder.pointerId) cancelInvReorder();
+});
+
 invList.addEventListener('pointerdown', e => {
   const card = e.target.closest('.inv-card');
-  if (e.button !== 0 || e.pointerType === 'touch' || drag || !card) return;
+  if (e.button !== 0 || e.pointerType === 'touch' || drag || invReorder || !card) return;
+  if (e.target.closest('.inv-grip')) {
+    startInvReorder(e, card);
+    return;
+  }
   startDrag(e, { instId: null, typeId: card.dataset.id, rot: false, offX: 0, offY: 0 }, null);
 });
 
 invList.addEventListener('click', e => {
   const card = e.target.closest('.inv-card');
-  if (card) openTypeDialog(card.dataset.id);
+  if (card && !invReorderClickGuard && !e.target.closest('.inv-grip')) openTypeDialog(card.dataset.id);
 });
 
 invList.addEventListener('keydown', e => {
   const card = e.target.closest('.inv-card');
-  if (!card || (e.key !== 'Enter' && e.key !== ' ')) return;
+  if (!card) return;
+  if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    e.preventDefault();
+    const id = card.dataset.id;
+    moveType(id, e.key === 'ArrowLeft' ? -1 : 1);
+    const moved = invList.querySelector(`.inv-card[data-id="${id}"]`);
+    moved?.focus();
+    moved?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    return;
+  }
+  if (e.key !== 'Enter' && e.key !== ' ') return;
   e.preventDefault();
   openTypeDialog(card.dataset.id);
 });
+
+invList.addEventListener('pointerover', e => {
+  const info = e.target.closest('.inv-info');
+  if (!info || drag || invReorder) return;
+  showTypePopup(typeOf(info.parentElement.dataset.id), info.parentElement);
+});
+invList.addEventListener('pointerout', e => {
+  if (e.target.closest('.inv-info') && !e.relatedTarget?.closest?.('.inv-info')) hideCardPopup();
+});
+invList.addEventListener('focusin', e => {
+  const card = e.target.closest('.inv-card');
+  if (card?.matches(':focus-visible')) showTypePopup(typeOf(card.dataset.id), card);
+});
+invList.addEventListener('focusout', hideCardPopup);
 
 invList.addEventListener('wheel', e => {
   if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
@@ -1246,6 +1779,7 @@ function openTypeDialog(id) {
     $('fCategory').value = invCategory;
   }
   $('deleteType').hidden = !id;
+  closeCardMenu();
   dialog.showModal();
 }
 
@@ -1301,11 +1835,9 @@ function computeVehicleBadges(list) {
   return new Map(list.map(v => [v, stats.get(v).filter(({ label, value }) => value > 0 && value === max.get(label)).map(({ label }) => 'Top ' + label)]));
 }
 
-function formatSeconds(s) {
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return r === 0 ? `${m}min` : `${m}min${r}s`;
+function formatClock(n, padHead) {
+  const head = String(Math.floor(n / 60));
+  return `${padHead ? head.padStart(2, '0') : head}:${String(n % 60).padStart(2, '0')}`;
 }
 
 function vehiclePriceLine(v) {
@@ -1313,28 +1845,89 @@ function vehiclePriceLine(v) {
   return v.constructionHallLevel != null ? `Construction Hall lvl ${v.constructionHallLevel}` : 'Not for sale';
 }
 
+function showVehicleTip(target) {
+  vehicleTip.textContent = target.dataset.tip;
+  vehicleTip.hidden = false;
+  const rect = target.getBoundingClientRect();
+  const tip = vehicleTip.getBoundingClientRect();
+  const margin = 8;
+  const x = Math.min(Math.max(rect.left + rect.width / 2 - tip.width / 2, margin), window.innerWidth - tip.width - margin);
+  const above = rect.top - tip.height - 6;
+  const y = above >= margin ? above : rect.bottom + 6;
+  vehicleTip.style.left = `${x}px`;
+  vehicleTip.style.top = `${y}px`;
+}
+
+function hideVehicleTip() {
+  vehicleTip.hidden = true;
+}
+
+function syncFavoriteButton(button, on) {
+  const label = on ? 'Remove from favorites' : 'Add to favorites';
+  button.setAttribute('aria-pressed', String(on));
+  button.setAttribute('aria-label', label);
+  button.dataset.tip = label;
+}
+
 function createVehicleCard(v, badges, scope) {
   const card = el('div', 'vehicle-card');
-  card.title = v.notes ? `${v.name} · ${v.notes}` : v.name;
   const icon = createIconImg(v.icon, 'vehicle-icon', () => icon.replaceWith(createInitials(v)));
   const group = vehicleGroup(v);
   const kind = v.type === 'cargo' ? VEHICLE_CATEGORY_SHORT[v.category] ?? VEHICLE_GROUP_LABELS[v.category] : 'Passenger';
-  const time = formatDuration(v.flightTimeMinutes);
-  card.append(icon, el('span', 'preset-name', v.name), el('span', 'inv-dim', `${VEHICLE_GROUP_LABELS[group]} · ${kind}`));
-  card.append(el('span', 'inv-dim', v.serviceTimeSeconds != null ? `${time} · service ${formatSeconds(v.serviceTimeSeconds)}` : time));
-  card.append(el('span', 'inv-dim', v.cost.resource === 'passengers' ? `${v.cost.amount} passengers` : `${formatPrice(v.cost.amount)} Aircoins`));
-  const reward = [];
-  if (v.reward.aircoins != null) reward.push(`${formatPrice(v.reward.aircoins)} Aircoins`);
-  if (v.reward.goods != null) reward.push(`${formatPrice(v.reward.goods)} Goods`);
-  reward.push(`${v.reward.xp} XP`);
-  card.append(el('span', 'inv-dim', reward.join(' · ')), el('span', 'inv-dim', vehiclePriceLine(v)));
-  if (v.unlockLevel != null) card.append(el('span', 'inv-dim', `Lvl ${v.unlockLevel}`));
-  if (v.notes) card.append(el('span', 'inv-dim', v.notes));
+  const title = el('div', 'vehicle-title');
+  const favorite = el('button', 'vehicle-fav');
+  favorite.type = 'button';
+  favorite.dataset.favorite = v.name;
+  const favoriteIcon = el('span', 'fav-icon');
+  favoriteIcon.setAttribute('aria-hidden', 'true');
+  favorite.append(favoriteIcon);
+  syncFavoriteButton(favorite, vehicleFavorites.has(v.name));
+  title.append(el('span', 'preset-name', v.name), favorite);
+  card.append(icon, title, el('span', 'inv-dim', `${VEHICLE_GROUP_LABELS[group]} · ${kind}`));
+  const stats = [
+    { key: 'flight', label: 'Flight', value: formatClock(v.flightTimeMinutes) },
+    v.serviceTimeSeconds != null && { key: 'service', label: 'Service', value: formatClock(v.serviceTimeSeconds, true) },
+    { key: 'cost', label: 'Cost', value: formatPrice(v.cost.amount), unit: v.cost.resource },
+    v.reward.aircoins != null && { key: 'aircoins', label: 'Aircoins', value: formatPrice(v.reward.aircoins) },
+    v.reward.goods != null && { key: 'goods', label: 'Goods', value: formatPrice(v.reward.goods) },
+    { key: 'xp', label: 'XP', value: String(v.reward.xp) },
+    { key: 'price', label: 'Price', value: vehiclePriceLine(v) }
+  ].filter(Boolean);
+  const list = el('dl', 'vehicle-stats');
+  for (const { key, label, value, unit } of stats) {
+    const term = el('dt');
+    const statIcon = el('span', `stat-icon stat-icon-${key}`);
+    statIcon.setAttribute('role', 'img');
+    statIcon.setAttribute('aria-label', label);
+    statIcon.dataset.tip = label;
+    term.append(statIcon);
+    const desc = el('dd', undefined, value);
+    if (unit) {
+      const unitIcon = el('span', `stat-icon stat-icon-${unit}`);
+      unitIcon.setAttribute('role', 'img');
+      unitIcon.setAttribute('aria-label', VEHICLE_COST_UNITS[unit]);
+      unitIcon.dataset.tip = VEHICLE_COST_UNITS[unit];
+      desc.append(unitIcon);
+    }
+    list.append(term, desc);
+  }
+  card.append(list);
+  if (v.unlockLevel != null) {
+    const level = el('span', 'vehicle-level', `Lvl ${v.unlockLevel}`);
+    level.dataset.tip = `Unlock level ${v.unlockLevel}`;
+    card.append(level);
+  }
+  if (v.maxOwned === 1) {
+    const max = el('span', 'vehicle-max', 'Max 1');
+    max.dataset.tip = 'Only one can be owned';
+    card.append(max);
+  }
+  if (v.notes) card.append(el('span', 'vehicle-notes', v.notes));
   if (badges.length) {
     const row = el('div', 'vehicle-badges');
     for (const label of badges) {
       const chip = el('span', 'vehicle-badge', label);
-      chip.title = `Best ${label.slice(4)} among ${scope}`;
+      chip.dataset.tip = `Best ${label.slice(4)} among ${scope}`;
       row.append(chip);
     }
     card.append(row);
@@ -1343,11 +1936,31 @@ function createVehicleCard(v, badges, scope) {
 }
 
 function inVehicleGroup(v) {
-  return vehicleGroupFilter === 'all' || vehicleGroup(v) === vehicleGroupFilter;
+  return vehicleGroupFilter.size === 0 || vehicleGroupFilter.has(vehicleGroup(v));
+}
+
+function vehicleGroupsLabel() {
+  if (vehicleGroupFilter.size === 0) return 'planes';
+  const adjectives = [];
+  const nouns = [];
+  for (const group of Object.keys(VEHICLE_GROUP_LABELS).filter(g => vehicleGroupFilter.has(g))) {
+    const plural = VEHICLE_GROUP_PLURALS[group];
+    if (plural.endsWith(' planes')) adjectives.push(plural.slice(0, -' planes'.length));
+    else nouns.push(plural);
+  }
+  const parts = adjectives.length ? [`${VEHICLE_GROUP_LIST.format(adjectives)} planes`, ...nouns] : nouns;
+  return VEHICLE_GROUP_LIST.format(parts);
+}
+
+function matchesVehicleFilters(v) {
+  return inVehicleGroup(v)
+    && (vehicleMaxLevel === '' || v.unlockLevel == null || v.unlockLevel <= vehicleMaxLevel)
+    && (!vehicleAircoinsOnly || v.price?.currency === 'aircoins')
+    && (!vehicleFavoritesOnly || vehicleFavorites.has(v.name));
 }
 
 function renderVehicleDurations() {
-  const durations = [...new Set(VEHICLES.filter(inVehicleGroup).map(v => v.flightTimeMinutes))].sort((a, b) => a - b);
+  const durations = [...new Set(VEHICLES.filter(matchesVehicleFilters).map(v => v.flightTimeMinutes))].sort((a, b) => a - b);
   if (!durations.includes(Number(vehicleDuration))) vehicleDuration = '';
   vehicleDurationSelect.replaceChildren(new Option('All durations', ''), ...durations.map(d => new Option(formatDuration(d), String(d))));
   vehicleDurationSelect.value = vehicleDuration;
@@ -1367,16 +1980,211 @@ function compareVehicles(a, b) {
 }
 
 function renderVehicles() {
-  for (const tab of vehicleTabs.children) tab.setAttribute('aria-selected', String(tab.dataset.group === vehicleGroupFilter));
+  for (const tab of vehicleTabs.children) {
+    const group = tab.dataset.group;
+    tab.setAttribute('aria-pressed', String(group === 'all' ? vehicleGroupFilter.size === 0 : vehicleGroupFilter.has(group)));
+  }
   const list = VEHICLES
-    .filter(v => inVehicleGroup(v) && (vehicleDuration === '' || v.flightTimeMinutes === Number(vehicleDuration)));
+    .filter(v => matchesVehicleFilters(v) && (vehicleDuration === '' || v.flightTimeMinutes === Number(vehicleDuration)));
   const badges = computeVehicleBadges(list);
   list.sort(compareVehicles);
-  const plural = vehicleGroupFilter === 'all' ? 'planes' : VEHICLE_GROUP_PLURALS[vehicleGroupFilter];
-  const scope = `the listed ${plural}` + (vehicleDuration !== '' ? ` with ${formatDuration(Number(vehicleDuration))} flights` : '');
+  const scope = `the listed ${vehicleGroupsLabel()}` + (vehicleDuration !== '' ? ` with ${formatDuration(Number(vehicleDuration))} flights` : '')
+    + (vehicleMaxLevel !== '' ? ` up to level ${vehicleMaxLevel}` : '')
+    + (vehicleAircoinsOnly ? ' buyable with Aircoins' : '')
+    + (vehicleFavoritesOnly ? ' in your favorites' : '');
   if (list.length) vehicleGrid.replaceChildren(...list.map(v => createVehicleCard(v, badges.get(v) ?? [], scope)));
-  else vehicleGrid.replaceChildren(el('p', 'hint', 'No planes match the selected filters'));
+  else vehicleGrid.replaceChildren(el('p', 'hint', vehicleFavoritesOnly && vehicleFavorites.size === 0 ? "No favorite planes yet: use the star next to a plane's name" : 'No planes match the selected filters'));
   vehicleGrid.scrollTop = 0;
+}
+
+function createGoalPlaneIcon(name) {
+  const vehicle = VEHICLE_BY_NAME.get(name);
+  if (!vehicle?.icon) return null;
+  const img = createIconImg(vehicle.icon, 'goal-plane-icon', () => img.remove());
+  return img;
+}
+
+function createGoalCard(goal, index) {
+  const done = index < goalsDone;
+  const current = index === goalsDone;
+  const card = el('div', 'goal-card');
+  card.classList.toggle('is-done', done);
+  card.classList.toggle('is-current', current);
+  if (current) card.setAttribute('aria-current', 'step');
+  const head = el('div', 'goal-head');
+  head.append(el('span', 'goal-index', `#${index + 1}`));
+  if (done) head.append(el('span', 'goal-done', 'Done'));
+  const tasks = el('ul', 'goal-tasks');
+  for (const task of goal.tasks) {
+    const item = el('li', 'goal-task');
+    const icon = task.plane ? createGoalPlaneIcon(task.plane) : null;
+    if (icon) item.append(icon);
+    item.append(el('span', undefined, task.text));
+    tasks.append(item);
+  }
+  const rewards = el('div', 'goal-rewards');
+  for (const reward of goal.rewards) {
+    const kind = /\baircoins?\b/i.test(reward.text) ? ' goal-reward-aircoins' : /\bxp\b/i.test(reward.text) ? ' goal-reward-xp' : '';
+    const chip = el('span', `goal-reward${kind}`);
+    const icon = reward.plane ? createGoalPlaneIcon(reward.plane) : null;
+    if (icon) chip.append(icon);
+    chip.append(reward.text);
+    rewards.append(chip);
+  }
+  const actions = el('div', 'goal-actions');
+  const addAction = (action, label, className) => {
+    const button = el('button', className, label);
+    button.type = 'button';
+    button.dataset.action = action;
+    button.dataset.index = String(index);
+    actions.append(button);
+  };
+  if (current) {
+    addAction('complete', 'Complete', 'primary');
+    if (goalsDone > 0) addAction('back', 'Back');
+  } else {
+    addAction('set', 'Set as current');
+  }
+  card.append(head, el('div', 'goal-title', goal.name), tasks, rewards, actions);
+  return card;
+}
+
+function createGoalsFinishedCard() {
+  const card = el('div', 'goal-card goal-finished is-current');
+  card.setAttribute('aria-current', 'step');
+  const actions = el('div', 'goal-actions');
+  const button = el('button', undefined, 'Back to last goal');
+  button.type = 'button';
+  button.dataset.action = 'last';
+  actions.append(button);
+  card.append(el('div', 'goal-title', 'All main goals completed'), actions);
+  return card;
+}
+
+function renderGoals() {
+  const percent = GOALS.length ? Math.round(goalsDone / GOALS.length * 100) : 0;
+  goalsProgress.setAttribute('aria-valuemax', String(GOALS.length));
+  goalsProgress.setAttribute('aria-valuenow', String(goalsDone));
+  goalsProgress.firstElementChild.style.width = `${percent}%`;
+  goalsProgressText.textContent = `${goalsDone} / ${GOALS.length} completed · ${percent}%`;
+  goalsProgress.setAttribute('aria-valuetext', goalsProgressText.textContent);
+  if (GOALS.length === 0) {
+    goalRow.replaceChildren(el('p', 'hint', 'No goals available'));
+    return;
+  }
+  const terms = normalizeSearch(goalQuery).split(' ').filter(Boolean);
+  const cards = [];
+  GOALS.forEach((goal, index) => {
+    if (goalMatches(index, terms)) cards.push(createGoalCard(goal, index));
+  });
+  if (terms.length === 0 && goalsDone === GOALS.length) cards.push(createGoalsFinishedCard());
+  goalSearchCount.textContent = terms.length === 0 ? '' : cards.length === 1 ? '1 goal found' : `${cards.length} goals found`;
+  if (cards.length === 0) goalRow.replaceChildren(el('p', 'hint', 'No goals match your search'));
+  else goalRow.replaceChildren(...cards);
+}
+
+function goalMatches(index, terms) {
+  const text = GOAL_SEARCH_TEXT[index];
+  return terms.every(term => {
+    const hash = /^#(\d+)$/.exec(term);
+    if (hash) return index + 1 === Number(hash[1]);
+    if (/^\d+$/.test(term)) return index + 1 === Number(term) || text.includes(term);
+    return text.includes(term);
+  });
+}
+
+function closeOnBackdrop(target) {
+  let outside = false;
+  const isOutside = e => {
+    const r = target.getBoundingClientRect();
+    return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+  };
+  target.addEventListener('pointerdown', e => { outside = e.target === target && isOutside(e); });
+  target.addEventListener('click', e => {
+    if (outside && e.target === target && isOutside(e)) target.close();
+    outside = false;
+  });
+}
+
+function scrollToCurrentGoal() {
+  goalRow.querySelector('.is-current')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+}
+
+function setGoalsDone(count, sourceIndex) {
+  const scrollLeft = goalRow.scrollLeft;
+  goalsDone = toInt(count, 0, GOALS.length, 0);
+  saveGoalsDone(goalsDone);
+  renderGoals();
+  if (goalRow.querySelector('.is-current')) scrollToCurrentGoal();
+  else goalRow.scrollLeft = scrollLeft;
+  const target = goalRow.querySelector('.is-current button') ?? goalRow.querySelector(`[data-index="${sourceIndex}"]`) ?? goalSearchInput;
+  target.focus({ preventScroll: true });
+}
+
+function goalGroupCategories(group) {
+  return group === 'any' ? GOAL_ANY_CATEGORIES : [group];
+}
+
+function genericRepresentative(group) {
+  const categories = goalGroupCategories(group);
+  return VEHICLES
+    .filter(v => categories.includes(v.category) && v.price?.currency === 'aircoins' && v.maxOwned !== 1)
+    .sort((a, b) => (a.unlockLevel ?? Infinity) - (b.unlockLevel ?? Infinity) || a.price.amount - b.price.amount)[0];
+}
+
+function requiredPlanes(fromIndex) {
+  const specific = new Map();
+  const generic = new Map();
+  for (let n = fromIndex; n < GOALS.length; n++) {
+    const goal = GOALS[n];
+    for (const name of new Set(goal.tasks.filter(t => t.plane).map(t => t.plane))) {
+      const entry = specific.get(name) ?? { vehicle: VEHICLE_BY_NAME.get(name), first: n, count: 0, group: null };
+      entry.count++;
+      specific.set(name, entry);
+    }
+    for (const group of new Set(goal.tasks.filter(t => t.group).map(t => t.group))) {
+      const entry = generic.get(group) ?? { first: n, count: 0 };
+      entry.count++;
+      generic.set(group, entry);
+    }
+  }
+  const planes = [...specific.values()].filter(item => item.vehicle);
+  for (const [group, { first, count }] of generic) {
+    const categories = goalGroupCategories(group);
+    if (planes.some(item => categories.includes(item.vehicle.category))) continue;
+    const vehicle = genericRepresentative(group);
+    if (vehicle) planes.push({ vehicle, first, count, group });
+  }
+  planes.sort((a, b) => a.first - b.first);
+  for (const item of planes) {
+    const source = GOALS.findIndex((goal, j) => j >= fromIndex && j < item.first && goal.rewards.some(r => r.plane === item.vehicle.name));
+    item.rewardFrom = source >= 0 ? source : null;
+  }
+  return planes;
+}
+
+function createRequiredPlane({ vehicle, first, count, group, rewardFrom }) {
+  const row = el('div', 'required-plane');
+  const icon = createIconImg(vehicle.icon, 'vehicle-icon', () => icon.replaceWith(createInitials(vehicle)));
+  const body = el('div', 'required-body');
+  const level = vehicle.unlockLevel != null ? `Lvl ${vehicle.unlockLevel} · ` : '';
+  body.append(
+    el('span', 'required-name', vehicle.name),
+    el('span', 'inv-dim', `${level}${vehiclePriceLine(vehicle)}`),
+    el('span', 'inv-dim', `First needed: #${first + 1} ${GOALS[first].name} · used in ${count === 1 ? '1 goal' : `${count} goals`}`)
+  );
+  if (group) body.append(el('span', 'inv-dim', group === 'any' ? 'Any plane' : `Any ${VEHICLE_GROUP_LABELS[group]} plane`));
+  row.append(icon, body);
+  if (rewardFrom != null) row.append(el('span', 'required-chip', `Reward from #${rewardFrom + 1}`));
+  return row;
+}
+
+function renderRequiredPlanes() {
+  const remaining = GOALS.length - goalsDone;
+  requiredPlanesScope.textContent = `Planes needed for the remaining ${remaining === 1 ? '1 goal' : `${remaining} goals`}`;
+  const planes = requiredPlanes(goalsDone);
+  if (planes.length) requiredPlanesList.replaceChildren(...planes.map(createRequiredPlane));
+  else requiredPlanesList.replaceChildren(el('p', 'hint', 'No specific planes needed for the remaining goals'));
 }
 
 function readTypeForm() {
@@ -1415,18 +2223,109 @@ $('deleteType').addEventListener('click', () => {
 $('choosePreset').addEventListener('click', () => {
   presetCategory = $('fCategory').value;
   renderPresets();
+  closeCardMenu();
   presetDialog.showModal();
 });
 $('openVehicles').addEventListener('click', () => {
+  vehicleLevelInput.value = vehicleMaxLevel;
+  vehicleAircoinsInput.setAttribute('aria-pressed', String(vehicleAircoinsOnly));
+  vehicleFavoritesInput.setAttribute('aria-pressed', String(vehicleFavoritesOnly));
   renderVehicleDurations();
   renderVehicles();
+  closeCardMenu();
   vehicleDialog.showModal();
 });
 $('closeVehicles').addEventListener('click', () => vehicleDialog.close());
+vehicleGrid.addEventListener('pointerover', e => {
+  const target = e.target.closest('[data-tip]');
+  if (target) showVehicleTip(target);
+});
+vehicleGrid.addEventListener('pointerout', e => {
+  const target = e.target.closest('[data-tip]');
+  const next = e.relatedTarget?.closest?.('[data-tip]');
+  if (target && next !== target) {
+    if (next && vehicleGrid.contains(next)) showVehicleTip(next);
+    else hideVehicleTip();
+  }
+});
+vehicleGrid.addEventListener('click', e => {
+  const button = e.target.closest('[data-favorite]');
+  if (!button) return;
+  const name = button.dataset.favorite;
+  if (!vehicleFavorites.delete(name)) vehicleFavorites.add(name);
+  saveVehicleFavorites();
+  if (vehicleFavoritesOnly) {
+    const scrollTop = vehicleGrid.scrollTop;
+    hideVehicleTip();
+    renderVehicleDurations();
+    renderVehicles();
+    vehicleGrid.scrollTop = scrollTop;
+    return;
+  }
+  const tipVisible = !vehicleTip.hidden;
+  syncFavoriteButton(button, vehicleFavorites.has(name));
+  if (tipVisible) showVehicleTip(button);
+});
+vehicleGrid.addEventListener('scroll', hideVehicleTip, { passive: true });
+vehicleDialog.addEventListener('close', hideVehicleTip);
+$('openGoals').addEventListener('click', () => {
+  goalSearchInput.value = '';
+  goalQuery = '';
+  renderGoals();
+  closeCardMenu();
+  goalsDialog.showModal();
+  scrollToCurrentGoal();
+  (goalRow.querySelector('.is-current button') ?? $('openRequiredPlanes')).focus({ preventScroll: true });
+});
+$('closeGoals').addEventListener('click', () => goalsDialog.close());
+closeOnBackdrop(goalsDialog);
+goalRow.addEventListener('click', e => {
+  const button = e.target.closest('[data-action]');
+  if (!button) return;
+  const { action, index } = button.dataset;
+  if (action === 'complete') setGoalsDone(goalsDone + 1, Number(index));
+  else if (action === 'back') setGoalsDone(goalsDone - 1, Number(index));
+  else if (action === 'last') setGoalsDone(GOALS.length - 1, GOALS.length - 1);
+  else if (action === 'set') setGoalsDone(Number(index), Number(index));
+});
+goalSearchInput.addEventListener('input', () => {
+  goalQuery = goalSearchInput.value;
+  renderGoals();
+  if (normalizeSearch(goalQuery) === '') scrollToCurrentGoal();
+  else goalRow.scrollLeft = 0;
+});
+goalSearchInput.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || goalSearchInput.value === '') return;
+  e.preventDefault();
+  e.stopPropagation();
+  goalSearchInput.value = '';
+  goalQuery = '';
+  renderGoals();
+  scrollToCurrentGoal();
+});
+goalsDialog.addEventListener('cancel', e => {
+  if (goalSearchInput.value !== '' && document.activeElement === goalSearchInput) e.preventDefault();
+});
+goalRow.addEventListener('wheel', e => {
+  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+  e.preventDefault();
+  goalRow.scrollLeft += e.deltaY * wheelUnit(e);
+}, { passive: false });
+$('openRequiredPlanes').addEventListener('click', () => {
+  renderRequiredPlanes();
+  closeCardMenu();
+  requiredPlanesDialog.showModal();
+});
+$('closeRequiredPlanes').addEventListener('click', () => requiredPlanesDialog.close());
 vehicleTabs.addEventListener('click', e => {
   const tab = e.target.closest('[data-group]');
   if (!tab) return;
-  vehicleGroupFilter = tab.dataset.group;
+  const group = tab.dataset.group;
+  if (group === 'all' || !vehicleGroupFilter.delete(group)) {
+    if (group === 'all') vehicleGroupFilter.clear();
+    else vehicleGroupFilter.add(group);
+  }
+  if (vehicleGroupFilter.size === Object.keys(VEHICLE_GROUP_LABELS).length) vehicleGroupFilter.clear();
   renderVehicleDurations();
   renderVehicles();
 });
@@ -1436,6 +2335,29 @@ vehicleDurationSelect.addEventListener('change', () => {
 });
 vehicleSortSelect.addEventListener('change', () => {
   vehicleSort = vehicleSortSelect.value;
+  renderVehicles();
+});
+vehicleLevelInput.addEventListener('input', () => {
+  vehicleMaxLevel = parseVehicleLevel(vehicleLevelInput.value);
+  saveVehicleLevel(vehicleMaxLevel);
+  renderVehicleDurations();
+  renderVehicles();
+});
+vehicleLevelInput.addEventListener('change', () => {
+  vehicleLevelInput.value = vehicleMaxLevel;
+});
+vehicleFavoritesInput.addEventListener('click', () => {
+  vehicleFavoritesOnly = !vehicleFavoritesOnly;
+  vehicleFavoritesInput.setAttribute('aria-pressed', String(vehicleFavoritesOnly));
+  saveVehicleFavoritesOnly(vehicleFavoritesOnly);
+  renderVehicleDurations();
+  renderVehicles();
+});
+vehicleAircoinsInput.addEventListener('click', () => {
+  vehicleAircoinsOnly = !vehicleAircoinsOnly;
+  vehicleAircoinsInput.setAttribute('aria-pressed', String(vehicleAircoinsOnly));
+  saveVehicleAircoinsOnly(vehicleAircoinsOnly);
+  renderVehicleDurations();
   renderVehicles();
 });
 $('clearIcon').addEventListener('click', () => setFormIcon(''));
@@ -1470,6 +2392,10 @@ invToggle.addEventListener('click', () => {
 });
 
 $('toggleRemove').addEventListener('click', () => setRemoveMode(!removeMode));
+removeSelectedBtn.addEventListener('click', () => {
+  removeInstances(selection);
+  $('toggleRemove').focus();
+});
 $('toggleIso').addEventListener('click', () => setIsoMode(!isoMode));
 $('removePiazzole').addEventListener('click', () => removePlacedWhere(t => t.kind === 'edificio' && t.piazzola));
 $('removeHotel').addEventListener('click', () => removePlacedWhere(t => t.kind === 'edificio' && t.hotel));
@@ -1507,6 +2433,7 @@ function importJSON(file) {
     const moved = normalizePlacements();
     zoom = 1;
     otherView = null;
+    clearSelection();
     commit(joinMessages(syncedMessage(synced), movedMessage(moved), limitMessage()) ?? 'Import completed');
     centerBoard();
   };
@@ -1529,24 +2456,58 @@ $('importFile').addEventListener('change', e => {
 });
 
 menuToggle.addEventListener('click', () => setMenuOpen(!menuOpen));
+centerViewBtn.addEventListener('click', fitView);
 document.addEventListener('pointerdown', e => {
+  if (!cardMenu.hidden && !cardMenu.contains(e.target)) closeCardMenu();
   if (menuOpen && !menuPanel.contains(e.target) && !menuToggle.contains(e.target)) setMenuOpen(false);
   if (!removeMenu.hidden && !removeMenu.parentElement.contains(e.target)) setRemoveMenuOpen(false);
 });
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !cardMenu.hidden) {
+    closeCardMenu();
+    return;
+  }
+  if (e.key === 'Escape' && invReorder) {
+    cancelInvReorder();
+    return;
+  }
   if (e.key === 'Escape' && drag) {
     endDrag();
     return;
   }
-  if (e.key !== 'Escape' || dialog.open || presetDialog.open || vehicleDialog.open) return;
+  if (e.key === 'Escape' && marquee) {
+    stopMarquee();
+    return;
+  }
+  if (dialog.open || presetDialog.open || vehicleDialog.open || goalsDialog.open || requiredPlanesDialog.open) return;
+  if (e.key !== 'Escape') {
+    handleSelectionKey(e);
+    return;
+  }
+  const menuShown = menuOpen || !removeMenu.hidden;
   if (menuOpen) setMenuOpen(false);
   if (!removeMenu.hidden) {
     setRemoveMenuOpen(false);
     removeMenuToggle.focus();
   }
+  if (!menuShown) clearSelection();
 });
 
+function handleSelectionKey(e) {
+  if (isoMode || removeMode || drag || e.target.closest?.('input, select, textarea')) return;
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selection.size > 0) {
+    e.preventDefault();
+    closeCardMenu();
+    removeInstances(selection);
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+    e.preventDefault();
+    closeCardMenu();
+    setSelection(state.instances.filter(isPlaced).map(i => i.id));
+  }
+}
+
 board.addEventListener('wheel', e => {
+  closeCardMenu();
   e.preventDefault();
   wheel.delta += e.deltaY * wheelUnit(e);
   wheel.x = e.clientX;
@@ -1560,11 +2521,73 @@ board.addEventListener('dblclick', e => {
 
 board.addEventListener('pointerdown', e => {
   if (e.button !== 0 || e.pointerType === 'touch' || (e.target !== board && e.target !== grid)) return;
+  if (e.shiftKey && !isoMode && !removeMode) {
+    marquee = { id: e.pointerId, x: e.clientX, y: e.clientY, last: { clientX: e.clientX, clientY: e.clientY }, cell: clampedCell(e), additive: e.ctrlKey || e.metaKey, active: false };
+    board.setPointerCapture(e.pointerId);
+    return;
+  }
   pan = { id: e.pointerId, x: e.clientX, y: e.clientY, left: offset.x, top: offset.y, active: false };
   board.setPointerCapture(e.pointerId);
 });
 
+function clampedCell(e) {
+  const cell = cellFromEvent(e);
+  return {
+    x: Math.min(state.grid.cols - 1, Math.max(0, cell.x)),
+    y: Math.min(state.grid.rows - 1, Math.max(0, cell.y))
+  };
+}
+
+function marqueeRect(point) {
+  const cell = clampedCell(point);
+  const x = Math.min(marquee.cell.x, cell.x);
+  const y = Math.min(marquee.cell.y, cell.y);
+  return { x, y, w: Math.max(marquee.cell.x, cell.x) - x + 1, h: Math.max(marquee.cell.y, cell.y) - y + 1 };
+}
+
+function updateMarqueeBox() {
+  const r = marqueeRect(marquee.last);
+  marqueeBox.style.left = `${r.x * cellSize}px`;
+  marqueeBox.style.top = `${r.y * cellSize}px`;
+  marqueeBox.style.width = `${r.w * cellSize}px`;
+  marqueeBox.style.height = `${r.h * cellSize}px`;
+  marqueeBox.hidden = false;
+}
+
+function stopMarquee() {
+  if (marquee && board.hasPointerCapture(marquee.id)) board.releasePointerCapture(marquee.id);
+  marquee = null;
+  marqueeBox.hidden = true;
+  board.classList.remove('is-marquee');
+}
+
+function finishMarquee(e) {
+  if (!marquee || e.pointerId !== marquee.id) return;
+  if (marquee.active) {
+    const rect = marqueeRect(e);
+    const hit = state.instances.filter(i => isPlaced(i) && overlaps(rectOf(i), rect)).map(i => i.id);
+    setSelection(marquee.additive ? [...selection, ...hit] : hit);
+  }
+  stopMarquee();
+}
+
 board.addEventListener('pointermove', e => {
+  if (marquee && e.pointerId === marquee.id) {
+    if (!(e.buttons & 1)) {
+      finishMarquee(e);
+      return;
+    }
+    if (!marquee.active) {
+      if (Math.hypot(e.clientX - marquee.x, e.clientY - marquee.y) < PAN_THRESHOLD) return;
+      marquee.active = true;
+      hideCardPopup();
+      hideArea();
+      board.classList.add('is-marquee');
+    }
+    marquee.last = { clientX: e.clientX, clientY: e.clientY };
+    updateMarqueeBox();
+    return;
+  }
   if (!pan || e.pointerId !== pan.id) return;
   if (!(e.buttons & 1)) {
     endPan(e);
@@ -1575,11 +2598,11 @@ board.addEventListener('pointermove', e => {
   if (!pan.active) {
     if (Math.hypot(dx, dy) < PAN_THRESHOLD) return;
     pan.active = true;
+    closeCardMenu();
     hideCardPopup();
     board.classList.add('is-panning');
   }
-  const a = boardArea();
-  setOffset(a.gridW > a.w ? pan.left + dx : offset.x, a.gridH > a.h ? pan.top + dy : offset.y);
+  setOffset(pan.left + dx, pan.top + dy);
 });
 
 function endPan(e) {
@@ -1588,9 +2611,19 @@ function endPan(e) {
   board.classList.remove('is-panning');
 }
 
-board.addEventListener('pointerup', endPan);
-board.addEventListener('pointercancel', endPan);
-board.addEventListener('lostpointercapture', endPan);
+board.addEventListener('pointerup', e => {
+  finishMarquee(e);
+  if (pan && e.pointerId === pan.id && !pan.active) clearSelection();
+  endPan(e);
+});
+board.addEventListener('pointercancel', e => {
+  if (marquee && e.pointerId === marquee.id) stopMarquee();
+  endPan(e);
+});
+board.addEventListener('lostpointercapture', e => {
+  if (marquee && e.pointerId === marquee.id) stopMarquee();
+  endPan(e);
+});
 
 window.addEventListener('pointermove', e => {
   if (!drag || e.pointerId !== drag.pointerId) return;
@@ -1605,7 +2638,8 @@ window.addEventListener('pointermove', e => {
     activateDrag();
     if (!drag) return;
   }
-  if (e.button === 2 && (e.buttons & 2)) rotateDrag();
+  if (e.button === 2 && drag.active) suppressMenu = true;
+  if (e.button === 1 && (e.buttons & 4)) rotateDrag();
   else updateDrag();
   startAutoScroll();
 });
@@ -1626,7 +2660,14 @@ document.body.addEventListener('lostpointercapture', () => {
 });
 
 window.addEventListener('blur', () => {
+  closeCardMenu();
+  if (invReorder) cancelInvReorder();
+  if (marquee) stopMarquee();
   if (drag) endDrag();
+});
+
+document.addEventListener('mousedown', e => {
+  if (e.button === 1 && (drag || board.contains(e.target))) e.preventDefault();
 });
 
 document.addEventListener('contextmenu', e => {
@@ -1636,6 +2677,7 @@ document.addEventListener('contextmenu', e => {
   suppressMenu = false;
 }, true);
 
+window.addEventListener('resize', closeCardMenu);
 window.addEventListener('resize', refreshLayout);
 
 loadState();
