@@ -6,6 +6,8 @@ const VEHICLE_FAVORITES_KEY = 'griglia-card:vehicle-favorites';
 const VEHICLE_FAVORITES_ONLY_KEY = 'griglia-card:vehicle-favorites-only';
 const VEHICLE_MAX_LEVEL = 999;
 const GOALS_KEY = 'griglia-card:goals-done';
+const STORY_GOALS_KEY = 'griglia-card:story-goals-done';
+const HANGAR_PLAN_KEY = 'griglia-card:hangar-plan';
 const MIN_GRID = 20;
 const MAX_GRID = 56;
 const MAX_TYPE_SIZE = 30;
@@ -26,23 +28,43 @@ const ISO_ICON_RATIO = 1;
 const DEFAULT_ART = { fit: 1, ax: 0.5, ay: 1, rise: ISO_ICON_RATIO };
 const ISO_MAX_K = ZOOM_MAX_CELL / Math.SQRT2;
 const PRESETS = globalThis.SKYRAMA_PRESETS ?? [];
-const PRESET_BY_ICON = new Map(PRESETS.map(p => [p.icon, p]));
+const EVENTS = globalThis.SKYRAMA_EVENTS ?? [];
+const EVENT_PRESETS = EVENTS.flatMap(e => e.items);
+const PRESET_BY_ICON = new Map([...PRESETS, ...EVENT_PRESETS].map(p => [p.icon, p]));
 const CATEGORIES = ['airside', 'landside', 'decorazione'];
 const VEHICLES = globalThis.SKYRAMA_VEHICLES ?? [];
 const VEHICLE_BY_NAME = new Map(VEHICLES.map(v => [v.name, v]));
 const GOALS = globalThis.SKYRAMA_GOALS ?? [];
+const STORY_GOALS = globalThis.SKYRAMA_STORY_GOALS ?? [];
 const GOAL_ANY_CATEGORIES = ['small', 'medium', 'large'];
 
 function normalizeSearch(text) {
   return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/[’‘]/g, "'").replace(/\s+/g, ' ').trim();
 }
 
-const GOAL_SEARCH_TEXT = GOALS.map(g => normalizeSearch([g.name, ...g.tasks.map(t => t.text), ...g.rewards.map(r => r.text)].join(' ')));
+function goalSearchText(goals) {
+  return goals.map(g => normalizeSearch([g.name, ...g.tasks.map(t => t.text), ...g.rewards.map(r => r.text)].join(' ')));
+}
+
+const GOAL_SEARCH_TEXT = goalSearchText(GOALS);
+const STORY_GOAL_SEARCH_TEXT = goalSearchText(STORY_GOALS);
+const GOAL_LISTS = {
+  main: { goals: GOALS, key: GOALS_KEY, search: GOAL_SEARCH_TEXT, label: 'Main goals', short: 'Main', noun: 'main' },
+  story: { goals: STORY_GOALS, key: STORY_GOALS_KEY, search: STORY_GOAL_SEARCH_TEXT, label: 'Story goals', short: 'Story', noun: 'story' }
+};
 const VEHICLE_GROUP_LABELS = { small: 'Small', medium: 'Medium', large: 'Large', cargo: 'Cargo', searama: 'Searama', ramacopter: 'Helirama' };
 const VEHICLE_GROUP_LIST = new Intl.ListFormat('en', { type: 'conjunction' });
 const VEHICLE_GROUP_PLURALS = { small: 'small planes', medium: 'medium planes', large: 'large planes', cargo: 'cargo planes', searama: 'Searamas', ramacopter: 'Heliramas' };
 const VEHICLE_CATEGORY_SHORT = { small: 'S', medium: 'M', large: 'L' };
 const VEHICLE_COST_UNITS = { passengers: 'Passengers', aircoins: 'Aircoins' };
+const HANGARS = [
+  { id: 'small', label: 'Small Hangar' },
+  { id: 'medium', label: 'Medium Hangar' },
+  { id: 'large', label: 'Large Hangar' },
+  { id: 'searama', label: 'Seaplane Hangar' },
+  { id: 'ramacopter', label: 'Ramacopter Hangar' }
+];
+const HANGAR_MAX_QTY = 99;
 
 const $ = id => document.getElementById(id);
 const board = $('board');
@@ -80,6 +102,7 @@ const vehicleAircoinsInput = $('vehicleAircoinsOnly');
 const vehicleFavoritesInput = $('vehicleFavoritesOnly');
 const goalsDialog = $('goalsDialog');
 const goalRow = $('goalRow');
+const goalTabs = $('goalTabs');
 const goalsProgress = $('goalsProgress');
 const goalsProgressText = $('goalsProgressText');
 const goalSearchInput = $('goalSearch');
@@ -87,6 +110,13 @@ const goalSearchCount = $('goalSearchCount');
 const requiredPlanesDialog = $('requiredPlanesDialog');
 const requiredPlanesScope = $('requiredPlanesScope');
 const requiredPlanesList = $('requiredPlanesList');
+const hangarDialog = $('hangarDialog');
+const hangarTabs = $('hangarTabs');
+const hangarPanel = $('hangarPanel');
+const hangarPlannedTitle = $('hangarPlannedTitle');
+const hangarPlannedList = $('hangarPlanned');
+const hangarAvailableTitle = $('hangarAvailableTitle');
+const hangarAvailableList = $('hangarAvailable');
 const cardPopup = $('cardPopup');
 const dragGhost = $('dragGhost');
 const cardMenu = $('cardMenu');
@@ -108,6 +138,7 @@ const invReorderScroll = { frame: 0, last: 0 };
 let selection = new Set();
 let marquee = null;
 let suppressMenu = false;
+let fill = null;
 let removeMode = false;
 let isoMode = false;
 let isoHead = 0;
@@ -127,7 +158,12 @@ let vehicleAircoinsOnly = loadVehicleAircoinsOnly();
 let vehicleFavorites = loadVehicleFavorites();
 let vehicleFavoritesOnly = loadVehicleFavoritesOnly();
 let goalsDone = loadGoalsDone();
+let storyGoalsDone = loadGoalsDone(STORY_GOALS_KEY, STORY_GOALS.length);
+let goalsTab = 'main';
 let goalQuery = '';
+let hangarPlan = loadHangarPlan();
+let hangarTab = 'small';
+const hangarExpanded = new Set();
 let invCategory = 'airside';
 const failedIcons = new Set();
 
@@ -490,6 +526,11 @@ function createInstance(typeId, x, y, rot) {
   commit();
 }
 
+function createInstances(typeId, cells, rot, msg) {
+  for (const { x, y } of cells) state.instances.push({ id: uid(), typeId, x, y, rot });
+  commit(msg);
+}
+
 function placeInstance(instId, x, y, rot) {
   const inst = instanceOf(instId);
   inst.x = x;
@@ -610,14 +651,15 @@ function createCard(inst) {
       hideCardPopup();
       card.replaceWith(createCard(inst));
     }));
-    if (Math.min(rect.w, rect.h) >= COMPACT_CARD) card.append(el('div', 'card-name', type.name));
+    if (Math.min(rect.w, rect.h) >= COMPACT_CARD) {
+      card.append(el('div', 'card-name', type.name));
+      if (type.piazzola) card.append(el('div', 'card-info card-bonus', `-${formatNumber(piazzolaBonus(inst))}%`));
+    }
   } else {
     const lines = cardLines(inst);
     card.append(el('div', 'card-name', lines[0]));
     for (const line of lines.slice(1)) card.append(el('div', 'card-info', line));
   }
-  card.addEventListener('mouseenter', () => showCardPopup(inst, card));
-  card.addEventListener('mouseleave', hideCardPopup);
   if (type.kind === 'potenziamento') {
     card.addEventListener('mouseenter', () => showArea(type, rect));
     card.addEventListener('mouseleave', hideArea);
@@ -636,15 +678,6 @@ function openPopup(content, anchorEl) {
   const top = above >= POPUP_MARGIN ? above : Math.min(anchor.bottom + POPUP_GAP, window.innerHeight - popup.height - POPUP_MARGIN);
   cardPopup.style.left = `${left}px`;
   cardPopup.style.top = `${Math.max(POPUP_MARGIN, top)}px`;
-}
-
-function showCardPopup(inst, card) {
-  const type = typeOf(inst.typeId);
-  const [name, ...infos] = cardLines(inst);
-  const content = [];
-  if (hasIcon(type)) content.push(createIconImg(type.icon, 'popup-icon'));
-  content.push(el('div', 'popup-name', name), ...infos.map(line => el('div', 'popup-info', line)));
-  openPopup(content, card);
 }
 
 function showTypePopup(type, card) {
@@ -975,6 +1008,7 @@ function flushWheel() {
   wheel.delta = 0;
   applyZoom(zoom * factor, wheel.x, wheel.y);
   if (drag?.active) updateDrag();
+  if (fill?.active) updateFill();
   if (marquee?.active) updateMarqueeBox();
 }
 
@@ -1178,17 +1212,45 @@ function saveVehicleAircoinsOnly(only) {
   } catch {}
 }
 
-function loadGoalsDone() {
+function loadGoalsDone(key = GOALS_KEY, max = GOALS.length) {
   try {
-    return toInt(localStorage.getItem(GOALS_KEY), 0, GOALS.length, 0);
+    return toInt(localStorage.getItem(key), 0, max, 0);
   } catch {
     return 0;
   }
 }
 
-function saveGoalsDone(count) {
+function saveGoalsDone(count, key = GOALS_KEY) {
   try {
-    localStorage.setItem(GOALS_KEY, String(count));
+    localStorage.setItem(key, String(count));
+  } catch {}
+}
+
+function hangarMaxQty(v) {
+  return v.maxOwned ?? HANGAR_MAX_QTY;
+}
+
+function loadHangarPlan() {
+  const plan = new Map(HANGARS.map(h => [h.id, new Map()]));
+  try {
+    const stored = JSON.parse(localStorage.getItem(HANGAR_PLAN_KEY));
+    if (!stored || typeof stored !== 'object') return plan;
+    for (const [id, raw] of Object.entries(stored)) {
+      if (!plan.has(id) || !raw || typeof raw !== 'object') continue;
+      for (const [name, qty] of Object.entries(raw)) {
+        const v = VEHICLE_BY_NAME.get(name);
+        if (v && v.category === id) plan.get(id).set(name, toInt(qty, 1, hangarMaxQty(v), 1));
+      }
+    }
+  } catch {}
+  return plan;
+}
+
+function saveHangarPlan() {
+  try {
+    const stored = {};
+    for (const [id, items] of hangarPlan) stored[id] = Object.fromEntries(items);
+    localStorage.setItem(HANGAR_PLAN_KEY, JSON.stringify(stored));
   } catch {}
 }
 
@@ -1384,6 +1446,95 @@ function endDrag() {
   hideArea();
 }
 
+function startFill(e, inst) {
+  fill = {
+    pointerId: e.pointerId,
+    typeId: inst.typeId,
+    rot: inst.rot,
+    origin: { x: inst.x, y: inst.y },
+    startX: e.clientX,
+    startY: e.clientY,
+    x: e.clientX,
+    y: e.clientY,
+    active: false,
+    previews: []
+  };
+}
+
+function activateFill() {
+  suppressMenu = true;
+  const type = typeOf(fill.typeId);
+  if (limitReached(type)) {
+    endFill();
+    showMsg(`Limit reached: max ${limitOf(type)} "${presetOf(type).name}"`);
+    return;
+  }
+  fill.active = true;
+  closeCardMenu();
+  hideCardPopup();
+  hideArea();
+  grid.classList.add('is-drag-active');
+  document.body.classList.add('is-filling');
+  try {
+    document.body.setPointerCapture(fill.pointerId);
+  } catch {
+    endFill();
+  }
+}
+
+function fillCells() {
+  const end = clampedCell({ clientX: fill.x, clientY: fill.y });
+  const dx = end.x - fill.origin.x;
+  const dy = end.y - fill.origin.y;
+  const horizontal = Math.abs(dx) >= Math.abs(dy);
+  const delta = horizontal ? dx : dy;
+  const free = [];
+  for (let i = 1; i <= Math.abs(delta); i++) {
+    const step = i * Math.sign(delta);
+    const cell = horizontal ? { x: fill.origin.x + step, y: fill.origin.y } : { x: fill.origin.x, y: fill.origin.y + step };
+    if (canPlace({ w: 1, h: 1 }, cell.x, cell.y)) free.push(cell);
+  }
+  const type = typeOf(fill.typeId);
+  const remaining = limitOf(type) > 0 ? Math.max(0, limitOf(type) - placedByIcon(type.icon)) : Infinity;
+  return { valid: free.slice(0, remaining), over: free.slice(remaining) };
+}
+
+function updateFill() {
+  const { valid, over } = fillCells();
+  const shown = [...valid.map(cell => [cell, true]), ...over.map(cell => [cell, false])];
+  while (fill.previews.length < shown.length) {
+    fill.previews.push(grid.appendChild(el('div', 'preview')));
+  }
+  fill.previews.forEach((node, i) => {
+    if (i < shown.length) showPreview({ ...shown[i][0], w: 1, h: 1 }, shown[i][1], node);
+    else node.hidden = true;
+  });
+}
+
+function finishFill() {
+  if (!fill) return;
+  if (!fill.active) {
+    endFill();
+    return;
+  }
+  const { typeId, rot } = fill;
+  const { valid, over } = fillCells();
+  endFill();
+  if (valid.length === 0) return;
+  const type = typeOf(typeId);
+  const msg = over.length > 0 ? `Limit reached: max ${limitOf(type)} "${presetOf(type).name}"` : undefined;
+  createInstances(typeId, valid, rot, msg);
+}
+
+function endFill() {
+  if (!fill) return;
+  if (fill.active && document.body.hasPointerCapture(fill.pointerId)) document.body.releasePointerCapture(fill.pointerId);
+  fill.previews.forEach(node => node.remove());
+  fill = null;
+  grid.classList.remove('is-drag-active');
+  document.body.classList.remove('is-filling');
+}
+
 function autoScrollVelocity() {
   if (!drag?.active || isoMode) return { vx: 0, vy: 0 };
   const r = board.getBoundingClientRect();
@@ -1445,12 +1596,20 @@ function stopAutoScroll() {
 grid.addEventListener('pointerdown', e => {
   const card = e.target.closest('.card');
   if (e.button === 2 && !drag) suppressMenu = false;
+  if (e.button === 2 && card && e.pointerType !== 'touch' && !removeMode && !drag && !isoMode && !fill) {
+    const inst = instanceOf(card.dataset.id);
+    const type = typeOf(inst.typeId);
+    if (type.w === 1 && type.h === 1) {
+      startFill(e, inst);
+      return;
+    }
+  }
   if (e.button === 1 && card && e.pointerType !== 'touch' && !removeMode && !drag) {
     e.preventDefault();
     rotateInstance(card.dataset.id);
     return;
   }
-  if (e.button !== 0 || e.pointerType === 'touch' || removeMode || drag || !card) return;
+  if (e.button !== 0 || e.pointerType === 'touch' || removeMode || drag || fill || !card) return;
   if (e.ctrlKey || e.metaKey || e.shiftKey) {
     toggleSelected(card.dataset.id);
     return;
@@ -1499,7 +1658,7 @@ function openCardMenu(instId, x, y, cell) {
   const top = y + menu.height + POPUP_MARGIN > window.innerHeight ? y - menu.height : y;
   cardMenu.style.left = `${Math.max(POPUP_MARGIN, left)}px`;
   cardMenu.style.top = `${Math.max(POPUP_MARGIN, top)}px`;
-  cardMenu.querySelector('button:not(:disabled)')?.focus();
+  cardMenu.focus();
 }
 
 function closeCardMenu() {
@@ -1804,9 +1963,14 @@ function createPresetCard(preset) {
   return card;
 }
 
+function createEventNodes() {
+  const nodes = EVENTS.filter(e => e.items.length).flatMap(e => [el('h3', 'preset-event-title', e.event), ...e.items.map(createPresetCard)]);
+  return nodes.length ? nodes : [el('p', 'hint', 'No event items available')];
+}
+
 function renderPresets() {
   for (const tab of presetTabs.children) tab.setAttribute('aria-selected', String(tab.dataset.category === presetCategory));
-  presetGrid.replaceChildren(...PRESETS.filter(p => p.category === presetCategory).map(createPresetCard));
+  presetGrid.replaceChildren(...(presetCategory === 'event' ? createEventNodes() : PRESETS.filter(p => p.category === presetCategory).map(createPresetCard)));
   presetGrid.scrollTop = 0;
 }
 
@@ -1883,7 +2047,31 @@ function createVehicleCard(v, badges, scope) {
   favorite.append(favoriteIcon);
   syncFavoriteButton(favorite, vehicleFavorites.has(v.name));
   title.append(el('span', 'preset-name', v.name), favorite);
-  card.append(icon, title, el('span', 'inv-dim', `${VEHICLE_GROUP_LABELS[group]} · ${kind}`));
+  card.append(icon, title, el('span', 'inv-dim', `${VEHICLE_GROUP_LABELS[group]} · ${kind}`), createVehicleStats(v));
+  if (v.unlockLevel != null) {
+    const level = el('span', 'vehicle-level', `Lvl ${v.unlockLevel}`);
+    level.dataset.tip = `Unlock level ${v.unlockLevel}`;
+    card.append(level);
+  }
+  if (v.maxOwned === 1) {
+    const max = el('span', 'vehicle-max', 'Max 1');
+    max.dataset.tip = 'Only one can be owned';
+    card.append(max);
+  }
+  if (v.notes) card.append(el('span', 'vehicle-notes', v.notes));
+  if (badges.length) {
+    const row = el('div', 'vehicle-badges');
+    for (const label of badges) {
+      const chip = el('span', 'vehicle-badge', label);
+      chip.dataset.tip = `Best ${label.slice(4)} among ${scope}`;
+      row.append(chip);
+    }
+    card.append(row);
+  }
+  return card;
+}
+
+function createVehicleStats(v) {
   const stats = [
     { key: 'flight', label: 'Flight', value: formatClock(v.flightTimeMinutes) },
     v.serviceTimeSeconds != null && { key: 'service', label: 'Service', value: formatClock(v.serviceTimeSeconds, true) },
@@ -1911,28 +2099,7 @@ function createVehicleCard(v, badges, scope) {
     }
     list.append(term, desc);
   }
-  card.append(list);
-  if (v.unlockLevel != null) {
-    const level = el('span', 'vehicle-level', `Lvl ${v.unlockLevel}`);
-    level.dataset.tip = `Unlock level ${v.unlockLevel}`;
-    card.append(level);
-  }
-  if (v.maxOwned === 1) {
-    const max = el('span', 'vehicle-max', 'Max 1');
-    max.dataset.tip = 'Only one can be owned';
-    card.append(max);
-  }
-  if (v.notes) card.append(el('span', 'vehicle-notes', v.notes));
-  if (badges.length) {
-    const row = el('div', 'vehicle-badges');
-    for (const label of badges) {
-      const chip = el('span', 'vehicle-badge', label);
-      chip.dataset.tip = `Best ${label.slice(4)} among ${scope}`;
-      row.append(chip);
-    }
-    card.append(row);
-  }
-  return card;
+  return list;
 }
 
 function inVehicleGroup(v) {
@@ -2004,9 +2171,39 @@ function createGoalPlaneIcon(name) {
   return img;
 }
 
+function goalsDoneOf(tab) {
+  return tab === 'story' ? storyGoalsDone : goalsDone;
+}
+
+function setGoalsDoneOf(tab, count) {
+  if (tab === 'story') storyGoalsDone = count;
+  else goalsDone = count;
+}
+
+function activeGoalList() {
+  return { ...GOAL_LISTS[goalsTab], done: goalsDoneOf(goalsTab) };
+}
+
+function goalLabel(tab, index) {
+  return `${GOAL_LISTS[tab].short} #${index + 1}`;
+}
+
+function goalRef(tab, index) {
+  return `${goalLabel(tab, index)} ${GOAL_LISTS[tab].goals[index].name}`;
+}
+
+function renderGoalTabs() {
+  for (const tab of goalTabs.children) {
+    const key = tab.dataset.goals;
+    tab.setAttribute('aria-selected', String(key === goalsTab));
+    tab.textContent = `${GOAL_LISTS[key].label} · ${goalsDoneOf(key)}/${GOAL_LISTS[key].goals.length}`;
+  }
+}
+
 function createGoalCard(goal, index) {
-  const done = index < goalsDone;
-  const current = index === goalsDone;
+  const doneCount = goalsDoneOf(goalsTab);
+  const done = index < doneCount;
+  const current = index === doneCount;
   const card = el('div', 'goal-card');
   card.classList.toggle('is-done', done);
   card.classList.toggle('is-current', current);
@@ -2041,7 +2238,7 @@ function createGoalCard(goal, index) {
   };
   if (current) {
     addAction('complete', 'Complete', 'primary');
-    if (goalsDone > 0) addAction('back', 'Back');
+    if (doneCount > 0) addAction('back', 'Back');
   } else {
     addAction('set', 'Set as current');
   }
@@ -2049,7 +2246,7 @@ function createGoalCard(goal, index) {
   return card;
 }
 
-function createGoalsFinishedCard() {
+function createGoalsFinishedCard(noun) {
   const card = el('div', 'goal-card goal-finished is-current');
   card.setAttribute('aria-current', 'step');
   const actions = el('div', 'goal-actions');
@@ -2057,34 +2254,36 @@ function createGoalsFinishedCard() {
   button.type = 'button';
   button.dataset.action = 'last';
   actions.append(button);
-  card.append(el('div', 'goal-title', 'All main goals completed'), actions);
+  card.append(el('div', 'goal-title', `All ${noun} goals completed`), actions);
   return card;
 }
 
 function renderGoals() {
-  const percent = GOALS.length ? Math.round(goalsDone / GOALS.length * 100) : 0;
-  goalsProgress.setAttribute('aria-valuemax', String(GOALS.length));
-  goalsProgress.setAttribute('aria-valuenow', String(goalsDone));
+  const { goals, done, label, noun } = activeGoalList();
+  const percent = goals.length ? Math.round(done / goals.length * 100) : 0;
+  goalsProgress.setAttribute('aria-label', `${label} progress`);
+  goalsProgress.setAttribute('aria-valuemax', String(goals.length));
+  goalsProgress.setAttribute('aria-valuenow', String(done));
   goalsProgress.firstElementChild.style.width = `${percent}%`;
-  goalsProgressText.textContent = `${goalsDone} / ${GOALS.length} completed · ${percent}%`;
+  goalsProgressText.textContent = `${done} / ${goals.length} completed · ${percent}%`;
   goalsProgress.setAttribute('aria-valuetext', goalsProgressText.textContent);
-  if (GOALS.length === 0) {
+  if (goals.length === 0) {
     goalRow.replaceChildren(el('p', 'hint', 'No goals available'));
     return;
   }
   const terms = normalizeSearch(goalQuery).split(' ').filter(Boolean);
   const cards = [];
-  GOALS.forEach((goal, index) => {
+  goals.forEach((goal, index) => {
     if (goalMatches(index, terms)) cards.push(createGoalCard(goal, index));
   });
-  if (terms.length === 0 && goalsDone === GOALS.length) cards.push(createGoalsFinishedCard());
+  if (terms.length === 0 && done === goals.length) cards.push(createGoalsFinishedCard(noun));
   goalSearchCount.textContent = terms.length === 0 ? '' : cards.length === 1 ? '1 goal found' : `${cards.length} goals found`;
   if (cards.length === 0) goalRow.replaceChildren(el('p', 'hint', 'No goals match your search'));
   else goalRow.replaceChildren(...cards);
 }
 
 function goalMatches(index, terms) {
-  const text = GOAL_SEARCH_TEXT[index];
+  const text = GOAL_LISTS[goalsTab].search[index];
   return terms.every(term => {
     const hash = /^#(\d+)$/.exec(term);
     if (hash) return index + 1 === Number(hash[1]);
@@ -2112,8 +2311,11 @@ function scrollToCurrentGoal() {
 
 function setGoalsDone(count, sourceIndex) {
   const scrollLeft = goalRow.scrollLeft;
-  goalsDone = toInt(count, 0, GOALS.length, 0);
-  saveGoalsDone(goalsDone);
+  const { goals, key } = activeGoalList();
+  const done = toInt(count, 0, goals.length, 0);
+  setGoalsDoneOf(goalsTab, done);
+  saveGoalsDone(done, key);
+  renderGoalTabs();
   renderGoals();
   if (goalRow.querySelector('.is-current')) scrollToCurrentGoal();
   else goalRow.scrollLeft = scrollLeft;
@@ -2132,59 +2334,279 @@ function genericRepresentative(group) {
     .sort((a, b) => (a.unlockLevel ?? Infinity) - (b.unlockLevel ?? Infinity) || a.price.amount - b.price.amount)[0];
 }
 
-function requiredPlanes(fromIndex) {
+function requiredPlanes() {
+  const tabs = Object.keys(GOAL_LISTS);
   const specific = new Map();
   const generic = new Map();
-  for (let n = fromIndex; n < GOALS.length; n++) {
-    const goal = GOALS[n];
-    for (const name of new Set(goal.tasks.filter(t => t.plane).map(t => t.plane))) {
-      const entry = specific.get(name) ?? { vehicle: VEHICLE_BY_NAME.get(name), first: n, count: 0, group: null };
-      entry.count++;
-      specific.set(name, entry);
-    }
-    for (const group of new Set(goal.tasks.filter(t => t.group).map(t => t.group))) {
-      const entry = generic.get(group) ?? { first: n, count: 0 };
-      entry.count++;
-      generic.set(group, entry);
+  const addUse = (map, key, tab, index, base) => {
+    const entry = map.get(key) ?? { ...base, count: 0, uses: {} };
+    const use = entry.uses[tab] ??= { first: index, count: 0 };
+    use.count++;
+    entry.count++;
+    map.set(key, entry);
+  };
+  for (const tab of tabs) {
+    const { goals } = GOAL_LISTS[tab];
+    for (let n = goalsDoneOf(tab); n < goals.length; n++) {
+      const goal = goals[n];
+      for (const name of new Set(goal.tasks.filter(t => t.plane).map(t => t.plane))) {
+        addUse(specific, name, tab, n, { vehicle: VEHICLE_BY_NAME.get(name), group: null });
+      }
+      for (const group of new Set(goal.tasks.filter(t => t.group).map(t => t.group))) {
+        addUse(generic, group, tab, n, { group });
+      }
     }
   }
   const planes = [...specific.values()].filter(item => item.vehicle);
-  for (const [group, { first, count }] of generic) {
-    const categories = goalGroupCategories(group);
+  for (const entry of generic.values()) {
+    const categories = goalGroupCategories(entry.group);
     if (planes.some(item => categories.includes(item.vehicle.category))) continue;
-    const vehicle = genericRepresentative(group);
-    if (vehicle) planes.push({ vehicle, first, count, group });
+    const vehicle = genericRepresentative(entry.group);
+    if (vehicle) planes.push({ ...entry, vehicle });
   }
-  planes.sort((a, b) => a.first - b.first);
   for (const item of planes) {
-    const source = GOALS.findIndex((goal, j) => j >= fromIndex && j < item.first && goal.rewards.some(r => r.plane === item.vehicle.name));
-    item.rewardFrom = source >= 0 ? source : null;
+    const usedTabs = tabs.filter(tab => item.uses[tab]);
+    item.first = { tab: usedTabs[0], index: item.uses[usedTabs[0]].first };
+    item.rewardFrom = null;
+    for (const usedTab of usedTabs) {
+      const source = GOAL_LISTS[usedTab].goals.findIndex((goal, j) => j >= goalsDoneOf(usedTab) && j < item.uses[usedTab].first && goal.rewards.some(r => r.plane === item.vehicle.name));
+      if (source >= 0) {
+        item.rewardFrom = { tab: usedTab, index: source };
+        break;
+      }
+    }
   }
+  planes.sort((a, b) => tabs.indexOf(a.first.tab) - tabs.indexOf(b.first.tab) || a.first.index - b.first.index);
   return planes;
 }
 
-function createRequiredPlane({ vehicle, first, count, group, rewardFrom }) {
+function goalCountText(count, noun) {
+  return `${count} ${noun} goal${count === 1 ? '' : 's'}`;
+}
+
+function goalUsesText(uses) {
+  return Object.keys(GOAL_LISTS).filter(tab => uses[tab]).map(tab => goalCountText(uses[tab].count, GOAL_LISTS[tab].noun));
+}
+
+function createRequiredPlane({ vehicle, first, uses, group, rewardFrom }) {
   const row = el('div', 'required-plane');
   const icon = createIconImg(vehicle.icon, 'vehicle-icon', () => icon.replaceWith(createInitials(vehicle)));
   const body = el('div', 'required-body');
   const level = vehicle.unlockLevel != null ? `Lvl ${vehicle.unlockLevel} · ` : '';
+  const firsts = Object.keys(GOAL_LISTS).filter(tab => uses[tab]).map(tab => tab === first.tab ? goalRef(tab, first.index) : goalLabel(tab, uses[tab].first));
   body.append(
     el('span', 'required-name', vehicle.name),
     el('span', 'inv-dim', `${level}${vehiclePriceLine(vehicle)}`),
-    el('span', 'inv-dim', `First needed: #${first + 1} ${GOALS[first].name} · used in ${count === 1 ? '1 goal' : `${count} goals`}`)
+    el('span', 'inv-dim', `First needed: ${firsts.join(' · ')} · used in ${goalUsesText(uses).join(' and ')}`)
   );
   if (group) body.append(el('span', 'inv-dim', group === 'any' ? 'Any plane' : `Any ${VEHICLE_GROUP_LABELS[group]} plane`));
   row.append(icon, body);
-  if (rewardFrom != null) row.append(el('span', 'required-chip', `Reward from #${rewardFrom + 1}`));
+  if (rewardFrom) row.append(el('span', 'required-chip', `Reward from ${goalLabel(rewardFrom.tab, rewardFrom.index)}`));
   return row;
 }
 
 function renderRequiredPlanes() {
-  const remaining = GOALS.length - goalsDone;
-  requiredPlanesScope.textContent = `Planes needed for the remaining ${remaining === 1 ? '1 goal' : `${remaining} goals`}`;
-  const planes = requiredPlanes(goalsDone);
+  const parts = Object.keys(GOAL_LISTS)
+    .map(tab => ({ tab, remaining: GOAL_LISTS[tab].goals.length - goalsDoneOf(tab) }))
+    .filter(({ remaining }) => remaining > 0)
+    .map(({ tab, remaining }) => goalCountText(remaining, GOAL_LISTS[tab].noun));
+  requiredPlanesScope.textContent = `Planes needed for the remaining ${parts.length ? parts.join(' and ') : '0 goals'}`;
+  const planes = requiredPlanes();
   if (planes.length) requiredPlanesList.replaceChildren(...planes.map(createRequiredPlane));
   else requiredPlanesList.replaceChildren(el('p', 'hint', 'No specific planes needed for the remaining goals'));
+}
+
+function hangarEssentials() {
+  return new Map(requiredPlanes().filter(item => item.group === null).map(item => [item.vehicle.name, item]));
+}
+
+function compareHangarPlanes(a, b) {
+  const [ga, la] = vehicleLevelKey(a);
+  const [gb, lb] = vehicleLevelKey(b);
+  return ga - gb || la - lb || a.name.localeCompare(b.name, 'en');
+}
+
+function createHangarFavorite() {
+  const fav = el('span', 'hangar-fav');
+  fav.setAttribute('role', 'img');
+  fav.setAttribute('aria-label', 'Favorite');
+  fav.title = 'Favorite';
+  const icon = el('span', 'fav-icon');
+  icon.setAttribute('aria-hidden', 'true');
+  fav.append(icon);
+  return fav;
+}
+
+function createHangarButton(text, action, name, label) {
+  const button = el('button', '', text);
+  button.type = 'button';
+  button.dataset.action = action;
+  button.dataset.name = name;
+  if (label) button.setAttribute('aria-label', label);
+  return button;
+}
+
+function createHangarStatIcon(key, label) {
+  const icon = el('span', `stat-icon stat-icon-${key}`);
+  icon.setAttribute('role', 'img');
+  icon.setAttribute('aria-label', label);
+  icon.title = label;
+  return icon;
+}
+
+function createHangarSvg(d, className) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  if (className) svg.setAttribute('class', className);
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2.2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', d);
+  svg.append(path);
+  return svg;
+}
+
+function syncHangarExpand(button, expanded, name) {
+  const label = `${expanded ? 'Hide' : 'Show'} stats for ${name}`;
+  button.setAttribute('aria-expanded', String(expanded));
+  button.setAttribute('aria-label', label);
+  button.title = label;
+}
+
+function createHangarStats(v) {
+  const list = createVehicleStats(v);
+  list.classList.add('hangar-stats');
+  for (const node of list.querySelectorAll('[data-tip]')) node.title = node.dataset.tip;
+  return list;
+}
+
+function toggleHangarStats(button) {
+  const { name } = button.dataset;
+  const expanded = !hangarExpanded.has(name);
+  if (expanded) hangarExpanded.add(name);
+  else hangarExpanded.delete(name);
+  syncHangarExpand(button, expanded, name);
+  const body = button.closest('.required-plane').querySelector('.required-body');
+  if (expanded) body.append(createHangarStats(VEHICLE_BY_NAME.get(name)));
+  else body.querySelector('.hangar-stats')?.remove();
+}
+
+function createHangarPlane(v, qty, essential) {
+  const row = el('div', 'required-plane');
+  const icon = createIconImg(v.icon, 'vehicle-icon', () => icon.replaceWith(createInitials(v)));
+  const body = el('div', 'required-body');
+  const title = el('div', 'hangar-title');
+  title.append(el('span', 'required-name', v.name));
+  if (vehicleFavorites.has(v.name)) title.append(createHangarFavorite());
+  const meta = el('span', 'inv-dim hangar-meta');
+  if (v.unlockLevel != null) meta.append(`Lvl ${v.unlockLevel} · `);
+  if (v.price) {
+    const aircash = v.price.currency === 'aircash';
+    meta.append(createHangarStatIcon(aircash ? 'aircash' : 'aircoins', aircash ? 'Aircash' : 'Aircoins'), formatPrice(v.price.amount));
+  } else {
+    meta.append(vehiclePriceLine(v));
+  }
+  meta.append(' · ', v.type === 'cargo' ? createHangarStatIcon('goods', 'Cargo') : createHangarStatIcon('passengers', 'Passenger'));
+  if (v.maxOwned) meta.append(` · Max ${v.maxOwned}`);
+  body.append(title, meta);
+  const expanded = hangarExpanded.has(v.name);
+  const expand = createHangarButton('', 'expand', v.name);
+  expand.className = 'hangar-expand';
+  expand.append(createHangarSvg('M9 6l6 6-6 6', 'dropdown-chevron'));
+  syncHangarExpand(expand, expanded, v.name);
+  if (expanded) body.append(createHangarStats(v));
+  row.append(expand, icon, body);
+  if (essential) {
+    const { first, count, uses } = essential;
+    const chip = el('span', 'required-chip', `${goalLabel(first.tab, first.index)} · ${count} left`);
+    chip.title = `First needed in ${goalRef(first.tab, first.index)}, used in ${goalUsesText(uses).join(' and ')} remaining`;
+    row.append(chip);
+  }
+  if (qty == null) {
+    const add = createHangarButton('', 'add', v.name, `Add ${v.name}`);
+    add.className = 'hangar-add';
+    add.title = `Add ${v.name}`;
+    add.append(createHangarSvg('M12 5v14M5 12h14'));
+    row.append(add);
+    return row;
+  }
+  const controls = el('div', 'hangar-qty');
+  controls.append(createHangarButton('−', 'dec', v.name, `Remove one ${v.name}, ${qty} planned`), el('span', 'hangar-qty-value', String(qty)));
+  if (v.maxOwned !== 1) {
+    const inc = createHangarButton('+', 'inc', v.name, `Add one ${v.name}, ${qty} planned`);
+    inc.disabled = qty >= hangarMaxQty(v);
+    controls.append(inc);
+  }
+  row.append(controls);
+  return row;
+}
+
+function hangarTotal(id) {
+  let total = 0;
+  for (const qty of hangarPlan.get(id).values()) total += qty;
+  return total;
+}
+
+function renderHangarTabs() {
+  for (const tab of hangarTabs.children) {
+    const hangar = HANGARS.find(h => h.id === tab.dataset.hangar);
+    tab.setAttribute('aria-selected', String(hangar.id === hangarTab));
+    tab.textContent = `${hangar.label} · ${hangarTotal(hangar.id)}`;
+  }
+}
+
+function renderHangarPanel() {
+  const plan = hangarPlan.get(hangarTab);
+  const essentials = hangarEssentials();
+  const planes = VEHICLES.filter(v => v.category === hangarTab).sort(compareHangarPlanes);
+  const planned = planes.filter(v => plan.has(v.name));
+  const available = planes.filter(v => !plan.has(v.name));
+  hangarPlannedTitle.textContent = `In hangar (${hangarTotal(hangarTab)})`;
+  hangarAvailableTitle.textContent = `Available (${available.length})`;
+  hangarPlannedList.replaceChildren(...(planned.length
+    ? planned.map(v => createHangarPlane(v, plan.get(v.name), essentials.get(v.name)))
+    : [el('p', 'hint', 'No planes planned for this hangar yet')]));
+  hangarAvailableList.replaceChildren(...(available.length
+    ? available.map(v => createHangarPlane(v, null, essentials.get(v.name)))
+    : [el('p', 'hint', 'All planes of this type are already planned')]));
+}
+
+function activeHangarTab() {
+  return hangarTabs.querySelector('[aria-selected="true"]');
+}
+
+function applyHangarAction(button) {
+  const { action, name } = button.dataset;
+  const v = VEHICLE_BY_NAME.get(name);
+  const plan = hangarPlan.get(hangarTab);
+  const qty = plan.get(name);
+  const row = button.closest('.required-plane');
+  const list = row.parentElement;
+  const index = [...list.children].indexOf(row);
+  if (action === 'add') plan.set(name, 1);
+  else if (action === 'inc') plan.set(name, Math.min(qty + 1, hangarMaxQty(v)));
+  else if (qty > 1) plan.set(name, qty - 1);
+  else plan.delete(name);
+  saveHangarPlan();
+  const scrolls = [hangarPlannedList.scrollTop, hangarAvailableList.scrollTop];
+  renderHangarTabs();
+  renderHangarPanel();
+  hangarPlannedList.scrollTop = scrolls[0];
+  hangarAvailableList.scrollTop = scrolls[1];
+  const sameRow = list.querySelector(`[data-name="${CSS.escape(name)}"]`)?.closest('.required-plane');
+  let target;
+  if (sameRow) {
+    target = sameRow.querySelector(`[data-action="${action}"]:not(:disabled)`) ?? sameRow.querySelector('button:not(:disabled)');
+  } else {
+    const rows = [...list.children].filter(r => r.classList.contains('required-plane'));
+    const adjacent = rows[index] ?? rows[index - 1];
+    target = adjacent?.querySelector(`[data-action="${action}"]:not(:disabled)`);
+  }
+  (target ?? activeHangarTab()).focus({ preventScroll: true });
 }
 
 function readTypeForm() {
@@ -2271,6 +2693,7 @@ vehicleDialog.addEventListener('close', hideVehicleTip);
 $('openGoals').addEventListener('click', () => {
   goalSearchInput.value = '';
   goalQuery = '';
+  renderGoalTabs();
   renderGoals();
   closeCardMenu();
   goalsDialog.showModal();
@@ -2279,13 +2702,23 @@ $('openGoals').addEventListener('click', () => {
 });
 $('closeGoals').addEventListener('click', () => goalsDialog.close());
 closeOnBackdrop(goalsDialog);
+goalTabs.addEventListener('click', e => {
+  const tab = e.target.closest('[data-goals]');
+  if (!tab) return;
+  goalsTab = tab.dataset.goals;
+  renderGoalTabs();
+  renderGoals();
+  if (normalizeSearch(goalQuery) === '') scrollToCurrentGoal();
+  else goalRow.scrollLeft = 0;
+});
 goalRow.addEventListener('click', e => {
   const button = e.target.closest('[data-action]');
   if (!button) return;
   const { action, index } = button.dataset;
-  if (action === 'complete') setGoalsDone(goalsDone + 1, Number(index));
-  else if (action === 'back') setGoalsDone(goalsDone - 1, Number(index));
-  else if (action === 'last') setGoalsDone(GOALS.length - 1, GOALS.length - 1);
+  const list = activeGoalList();
+  if (action === 'complete') setGoalsDone(list.done + 1, Number(index));
+  else if (action === 'back') setGoalsDone(list.done - 1, Number(index));
+  else if (action === 'last') setGoalsDone(list.goals.length - 1, list.goals.length - 1);
   else if (action === 'set') setGoalsDone(Number(index), Number(index));
 });
 goalSearchInput.addEventListener('input', () => {
@@ -2317,6 +2750,30 @@ $('openRequiredPlanes').addEventListener('click', () => {
   requiredPlanesDialog.showModal();
 });
 $('closeRequiredPlanes').addEventListener('click', () => requiredPlanesDialog.close());
+$('openHangars').addEventListener('click', () => {
+  renderHangarTabs();
+  renderHangarPanel();
+  closeCardMenu();
+  hangarDialog.showModal();
+  activeHangarTab().focus({ preventScroll: true });
+});
+$('closeHangars').addEventListener('click', () => hangarDialog.close());
+closeOnBackdrop(hangarDialog);
+hangarTabs.addEventListener('click', e => {
+  const tab = e.target.closest('[data-hangar]');
+  if (!tab) return;
+  hangarTab = tab.dataset.hangar;
+  renderHangarTabs();
+  renderHangarPanel();
+  hangarPlannedList.scrollTop = 0;
+  hangarAvailableList.scrollTop = 0;
+});
+hangarPanel.addEventListener('click', e => {
+  const button = e.target.closest('button[data-action]');
+  if (!button) return;
+  if (button.dataset.action === 'expand') toggleHangarStats(button);
+  else applyHangarAction(button);
+});
 vehicleTabs.addEventListener('click', e => {
   const tab = e.target.closest('[data-group]');
   if (!tab) return;
@@ -2475,11 +2932,15 @@ document.addEventListener('keydown', e => {
     endDrag();
     return;
   }
+  if (e.key === 'Escape' && fill) {
+    endFill();
+    return;
+  }
   if (e.key === 'Escape' && marquee) {
     stopMarquee();
     return;
   }
-  if (dialog.open || presetDialog.open || vehicleDialog.open || goalsDialog.open || requiredPlanesDialog.open) return;
+  if (dialog.open || presetDialog.open || vehicleDialog.open || goalsDialog.open || requiredPlanesDialog.open || hangarDialog.open) return;
   if (e.key !== 'Escape') {
     handleSelectionKey(e);
     return;
@@ -2494,7 +2955,7 @@ document.addEventListener('keydown', e => {
 });
 
 function handleSelectionKey(e) {
-  if (isoMode || removeMode || drag || e.target.closest?.('input, select, textarea')) return;
+  if (isoMode || removeMode || drag || fill || e.target.closest?.('input, select, textarea')) return;
   if ((e.key === 'Delete' || e.key === 'Backspace') && selection.size > 0) {
     e.preventDefault();
     closeCardMenu();
@@ -2626,6 +3087,25 @@ board.addEventListener('lostpointercapture', e => {
 });
 
 window.addEventListener('pointermove', e => {
+  if (fill && e.pointerId === fill.pointerId) {
+    fill.x = e.clientX;
+    fill.y = e.clientY;
+    if (e.buttons & 1) {
+      endFill();
+      return;
+    }
+    if (!(e.buttons & 2)) {
+      finishFill();
+      return;
+    }
+    if (!fill.active) {
+      if (Math.hypot(fill.x - fill.startX, fill.y - fill.startY) < PAN_THRESHOLD) return;
+      activateFill();
+      if (!fill) return;
+    }
+    updateFill();
+    return;
+  }
   if (!drag || e.pointerId !== drag.pointerId) return;
   drag.x = e.clientX;
   drag.y = e.clientY;
@@ -2638,13 +3118,22 @@ window.addEventListener('pointermove', e => {
     activateDrag();
     if (!drag) return;
   }
-  if (e.button === 2 && drag.active) suppressMenu = true;
-  if (e.button === 1 && (e.buttons & 4)) rotateDrag();
-  else updateDrag();
+  if (e.button === 2 && (e.buttons & 2)) {
+    suppressMenu = true;
+    rotateDrag();
+  } else {
+    updateDrag();
+  }
   startAutoScroll();
 });
 
 window.addEventListener('pointerup', e => {
+  if (fill && e.pointerId === fill.pointerId && e.button === 2) {
+    fill.x = e.clientX;
+    fill.y = e.clientY;
+    finishFill();
+    return;
+  }
   if (!drag || e.pointerId !== drag.pointerId || e.button !== 0) return;
   drag.x = e.clientX;
   drag.y = e.clientY;
@@ -2653,10 +3142,12 @@ window.addEventListener('pointerup', e => {
 
 window.addEventListener('pointercancel', () => {
   if (drag) endDrag();
+  if (fill) endFill();
 });
 
 document.body.addEventListener('lostpointercapture', () => {
   if (drag?.active) endDrag();
+  if (fill?.active) endFill();
 });
 
 window.addEventListener('blur', () => {
@@ -2664,6 +3155,7 @@ window.addEventListener('blur', () => {
   if (invReorder) cancelInvReorder();
   if (marquee) stopMarquee();
   if (drag) endDrag();
+  if (fill) endFill();
 });
 
 document.addEventListener('mousedown', e => {

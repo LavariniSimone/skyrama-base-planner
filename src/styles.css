@@ -27,6 +27,7 @@
   --stat-xp: oklch(0.600 0.180 350);
   --stat-price: var(--ok);
   --stat-passengers: oklch(0.600 0.120 195);
+  --stat-aircash: oklch(0.560 0.160 300);
   --font-body: 'Outfit', 'Century Gothic', 'Avenir Next', system-ui, sans-serif;
   --font-display: 'Outfit', 'Century Gothic', 'Avenir Next', system-ui, sans-serif;
   --radius-xl: 24px;
@@ -338,9 +339,10 @@ body:not(.remove-mode) #grid:not(.is-drag-active) .card:hover { box-shadow: var(
 #grid.is-drag-active .card { pointer-events: none; }
 .card.has-icon { align-items: center; justify-content: center; text-align: center; }
 .card-icon { flex: 1 1 0; width: 100%; min-height: 0; object-fit: contain; pointer-events: none; }
-.card.has-icon .card-name { flex: none; max-width: 100%; }
+.card.has-icon .card-name, .card.has-icon .card-info { flex: none; max-width: 100%; }
 .card-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-info { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-bonus { color: var(--accent); font-weight: 600; }
 body.remove-mode .card {
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23F44336'/%3E%3Cpath d='M7.5 7.5l9 9M16.5 7.5l-9 9' stroke='white' stroke-width='2.5'/%3E%3C/svg%3E") 12 12, crosshair;
 }
@@ -459,6 +461,7 @@ body.remove-mode .card:hover { outline: 3px solid var(--danger); outline-offset:
 }
 .dropdown-menu button { min-height: 30px; font-size: 13px; }
 .card-menu { position: fixed; right: auto; bottom: auto; z-index: 30; min-width: 160px; }
+.card-menu:focus { outline: none; }
 .card-menu [data-action="delete"] { color: var(--danger-ink); }
 #toggleRemove { display: inline-flex; align-items: center; justify-content: center; width: 30px; min-height: 30px; height: 30px; padding: 0; border-color: transparent; border-radius: 999px; background: var(--danger-soft); color: var(--danger-ink); }
 #toggleRemove svg { width: 16px; height: 16px; }
@@ -484,8 +487,8 @@ body.is-card-dragging #removeSelected { visibility: hidden; }
 .pswitch:hover:not(:disabled) { background: var(--surface); border-color: var(--border); }
 .pswitch:active:not(:disabled) { transform: none; }
 #toggleIso { box-shadow: var(--shadow-card), var(--shadow-float); flex: none; }
-#openGoals, #openVehicles { height: var(--switch-h); padding: 0 16px; border-radius: 999px; box-shadow: var(--shadow-card), var(--shadow-float); flex: none; }
-#openGoals svg, #openVehicles svg { width: 18px; height: 18px; flex: none; }
+#openGoals, #openVehicles, #openHangars { height: var(--switch-h); padding: 0 16px; border-radius: 999px; box-shadow: var(--shadow-card), var(--shadow-float); flex: none; }
+#openGoals svg, #openVehicles svg, #openHangars svg { width: 18px; height: 18px; flex: none; }
 #topRight { position: fixed; top: 16px; right: 16px; z-index: 20; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); }
 #topLeft { position: fixed; top: 16px; left: 16px; z-index: 20; display: flex; align-items: center; gap: 8px; }
 
@@ -506,8 +509,8 @@ body.is-card-dragging #removeSelected { visibility: hidden; }
 }
 .inv-head { display: flex; flex: none; align-items: center; justify-content: flex-start; gap: 8px; }
 .inv-head-actions { display: flex; align-items: center; gap: 8px; }
-#newType, #invToggle { display: inline-flex; align-items: center; justify-content: center; width: 30px; min-height: 30px; height: 30px; padding: 0; border-radius: 999px; }
-#newType svg { width: 16px; height: 16px; }
+#newType, #invToggle, .hangar-add { display: inline-flex; align-items: center; justify-content: center; width: 30px; min-height: 30px; height: 30px; padding: 0; border-radius: 999px; }
+#newType svg, .hangar-add svg { width: 16px; height: 16px; }
 .inv-tabs { display: flex; flex: none; gap: 4px; }
 .inv-tabs button { min-height: 28px; padding: 3px 12px; border-radius: 999px; font-size: 13px; }
 #invToggle[aria-expanded="true"] .dropdown-chevron { transform: rotate(180deg); }
@@ -646,8 +649,12 @@ legend { padding: 0 6px; color: var(--muted); font-size: 11px; font-weight: 600;
 .preset-icon { width: 85px; height: 75px; object-fit: contain; }
 .preset-name { max-width: 100%; overflow: hidden; text-align: center; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .preset-info { max-width: 100%; text-align: center; }
+.preset-event-title { grid-column: 1 / -1; margin: 8px 0 0; padding-top: 12px; border-top: 1px solid var(--inset-border); color: var(--muted-ink); font-size: 13px; font-weight: 600; }
+.preset-event-title:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.preset-grid > .hint { grid-column: 1 / -1; margin: 0; }
 .preset-tabs { flex-wrap: wrap; }
 #vehicleDialog { width: min(980px, calc(100vw - 32px)); }
+#hangarDialog { width: min(980px, calc(100vw - 32px)); }
 .vehicle-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; }
 .vehicle-filters .field { margin-bottom: 0; }
 .vehicle-toprow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 14px; }
@@ -695,7 +702,8 @@ legend { padding: 0 6px; color: var(--muted); font-size: 11px; font-weight: 600;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2'/%3E%3C/svg%3E") no-repeat center / contain;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2'/%3E%3C/svg%3E") no-repeat center / contain;
 }
-.vehicle-fav[aria-pressed="true"] .fav-icon {
+.vehicle-fav[aria-pressed="true"] .fav-icon,
+.hangar-fav .fav-icon {
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23000' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2'/%3E%3C/svg%3E") no-repeat center / contain;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23000' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2'/%3E%3C/svg%3E") no-repeat center / contain;
 }
@@ -725,6 +733,7 @@ legend { padding: 0 6px; color: var(--muted); font-size: 11px; font-weight: 600;
 .stat-icon-xp { color: var(--stat-xp); }
 .stat-icon-price { color: var(--stat-price); }
 .stat-icon-passengers { color: var(--stat-passengers); }
+.stat-icon-aircash { color: var(--stat-aircash); }
 .stat-icon {
   flex: none;
   width: 15px;
@@ -741,6 +750,7 @@ legend { padding: 0 6px; color: var(--muted); font-size: 11px; font-weight: 600;
 .stat-icon-goods { --stat-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7.5 4.27 9 5.15M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5M12 22V12'/%3E%3C/svg%3E"); }
 .stat-icon-xp { --stat-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z'/%3E%3C/svg%3E"); }
 .stat-icon-price { --stat-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z'/%3E%3Cpath d='M7.5 7.5h.01'/%3E%3C/svg%3E"); }
+.stat-icon-aircash { --stat-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='6' width='20' height='12' rx='2'/%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Cpath d='M6 12h.01M18 12h.01'/%3E%3C/svg%3E"); }
 
 #goalsDialog { width: min(1100px, calc(100vw - 32px)); }
 #requiredPlanesDialog { width: min(640px, calc(100vw - 32px)); }
@@ -813,6 +823,24 @@ legend { padding: 0 6px; color: var(--muted); font-size: 11px; font-weight: 600;
 .required-body { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
 .required-name { font-weight: 600; }
 .required-chip { flex: none; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 11px; font-weight: 600; }
+.hangar-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.hangar-columns > section { min-width: 0; }
+.hangar-columns h3 { margin: 0 0 8px; font-size: 14px; }
+.hangar-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.hangar-meta .stat-icon { display: inline-block; width: 1.1em; height: 1.1em; margin-right: 3px; vertical-align: -0.2em; }
+.hangar-fav { display: inline-flex; flex: none; color: var(--favorite); }
+.hangar-expand { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 26px; height: 26px; min-height: 26px; padding: 0; border: 0; border-radius: 999px; background: transparent; }
+.hangar-expand[aria-expanded="true"] .dropdown-chevron { transform: rotate(90deg); }
+.required-plane:has(.hangar-stats) { align-items: flex-start; }
+.hangar-stats { grid-template-columns: auto 1fr auto 1fr; margin-top: 6px; }
+.hangar-add { flex: none; background: transparent; border-color: var(--accent); color: var(--accent); }
+.hangar-add:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-ink); color: var(--accent-ink); }
+.hangar-qty button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; min-height: 30px; padding: 0; border-radius: 999px; font-size: 15px; line-height: 1; }
+.hangar-qty { display: flex; flex: none; align-items: center; gap: 6px; }
+.hangar-qty-value { min-width: 2ch; font-variant-numeric: tabular-nums; font-weight: 600; text-align: center; }
+@media (max-width: 720px) {
+  .hangar-columns { grid-template-columns: 1fr; }
+}
 
 .tip {
   position: fixed;
@@ -875,7 +903,7 @@ legend { padding: 0 6px; color: var(--muted); font-size: 11px; font-weight: 600;
   text-align: center;
 }
 body.is-card-dragging, body.is-card-dragging *, body.is-inv-reordering, body.is-inv-reordering * { cursor: grabbing !important; user-select: none; }
-.popup-icon { width: 85px; height: 75px; object-fit: contain; }
+body.is-filling, body.is-filling * { cursor: copy !important; user-select: none; }
 .popup-name { font-weight: 600; }
 .popup-info { color: var(--muted-ink); font-size: 13px; }
 

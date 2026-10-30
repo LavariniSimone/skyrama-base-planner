@@ -3,9 +3,11 @@ const fs = require('fs');
 const path = require('path');
 const PRESETS = require('./src/presets.js');
 const VEHICLES = require('./src/vehicles.js');
+const EVENTS = require('./src/events.js');
 
 const ICON_URLS = new Map([
   ...PRESETS.filter(p => p.url).map(p => [p.icon, p.url]),
+  ...EVENTS.flatMap(e => e.items).filter(i => i.url).map(i => [i.icon, i.url]),
   ...VEHICLES.filter(v => v.imageUrl).map(v => [v.icon, v.imageUrl])
 ]);
 const ICON_NAME = /^[a-z0-9-]+\.png$/;

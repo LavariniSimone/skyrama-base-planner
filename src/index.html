@@ -11,8 +11,10 @@
 <link rel="stylesheet" href="../node_modules/@fontsource/outfit/700.css">
 <link rel="stylesheet" href="styles.css">
 <script src="presets.js" defer></script>
+<script src="events.js" defer></script>
 <script src="vehicles.js" defer></script>
 <script src="goals.js" defer></script>
+<script src="story-goals.js" defer></script>
 <script src="app.js" defer></script>
 </head>
 <body>
@@ -25,7 +27,7 @@
   <div id="iso" hidden><div id="isoGround"></div></div>
 </main>
 <div id="cardPopup" role="tooltip" hidden></div>
-<div id="cardMenu" class="dropdown-menu card-menu" role="menu" aria-label="Card actions" hidden>
+<div id="cardMenu" class="dropdown-menu card-menu" role="menu" aria-label="Card actions" tabindex="-1" hidden>
   <button type="button" role="menuitem" data-action="rotate">Rotate</button>
   <button type="button" role="menuitem" data-action="delete">Delete</button>
 </div>
@@ -83,6 +85,7 @@
 <div id="topLeft">
   <button type="button" id="openGoals"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/></svg>Goals</button>
   <button type="button" id="openVehicles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.2.4c-.2.4-.1.8.2 1.1L9 11l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.7.5 1.1.2l.4-.2c.4-.3.6-.7.5-1.2z"/></svg>Planes</button>
+  <button type="button" id="openHangars"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20v-7a10 8 0 0 1 20 0v7"/><path d="M1 20h22"/><path d="M6.5 20v-7h11v7"/><path d="M12 13v7"/></svg>Hangars</button>
 </div>
 
 <div id="topRight">
@@ -153,6 +156,7 @@
     <button type="button" role="tab" data-category="airside">Airside</button>
     <button type="button" role="tab" data-category="landside">Landside</button>
     <button type="button" role="tab" data-category="decorazione">Decoration</button>
+    <button type="button" role="tab" data-category="event">Event items</button>
   </div>
   <div id="presetGrid" class="preset-grid" role="tabpanel"></div>
   <div class="dialog-actions">
@@ -162,7 +166,7 @@
 
 <dialog id="goalsDialog">
   <div class="goals-title-row">
-    <h2>Main goals</h2>
+    <h2>Goals</h2>
     <div class="goals-tools">
       <span id="goalSearchCount" class="inv-dim" aria-live="polite"></span>
       <input type="search" id="goalSearch" placeholder="Search goals" aria-label="Search goals" autocomplete="off" spellcheck="false">
@@ -170,13 +174,17 @@
       <button type="button" id="closeGoals" class="dialog-close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
   </div>
+  <div id="goalTabs" class="preset-tabs" role="tablist" aria-label="Goal lists">
+    <button type="button" role="tab" data-goals="main" aria-controls="goalRow"></button>
+    <button type="button" role="tab" data-goals="story" aria-controls="goalRow"></button>
+  </div>
   <div class="goals-head">
     <div class="goals-progress-box">
       <div id="goalsProgress" class="goals-progress" role="progressbar" aria-label="Main goals progress" aria-valuemin="0"><div class="goals-progress-fill"></div></div>
       <span id="goalsProgressText" class="inv-dim"></span>
     </div>
   </div>
-  <div id="goalRow" class="goal-row"></div>
+  <div id="goalRow" class="goal-row" role="tabpanel"></div>
 </dialog>
 
 <dialog id="requiredPlanesDialog">
@@ -225,6 +233,32 @@
   <div id="vehicleTip" class="tip" role="tooltip" hidden></div>
   <div class="dialog-actions">
     <button type="button" id="closeVehicles">Close</button>
+  </div>
+</dialog>
+
+<dialog id="hangarDialog">
+  <div class="goals-title-row">
+    <h2>Hangar planning</h2>
+    <button type="button" id="closeHangars" class="dialog-close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div id="hangarTabs" class="preset-tabs" role="tablist" aria-label="Hangars">
+    <button type="button" role="tab" data-hangar="small">Small Hangar</button>
+    <button type="button" role="tab" data-hangar="medium">Medium Hangar</button>
+    <button type="button" role="tab" data-hangar="large">Large Hangar</button>
+    <button type="button" role="tab" data-hangar="searama">Seaplane Hangar</button>
+    <button type="button" role="tab" data-hangar="ramacopter">Ramacopter Hangar</button>
+  </div>
+  <div id="hangarPanel" role="tabpanel">
+    <div class="hangar-columns">
+      <section>
+        <h3 id="hangarPlannedTitle"></h3>
+        <div id="hangarPlanned" class="required-list"></div>
+      </section>
+      <section>
+        <h3 id="hangarAvailableTitle"></h3>
+        <div id="hangarAvailable" class="required-list"></div>
+      </section>
+    </div>
   </div>
 </dialog>
 
